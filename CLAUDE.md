@@ -1,10 +1,10 @@
-# CLAUDE.md — moto-safety-node
+# CLAUDE.md — vehicle-safety-node
 
 @.claude/PLATFORM-RULES.md
 
 ## What this repo is
 
-The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (NUCLEO-H755ZI-Q, D-072). The Cortex-M7 of the same chip runs `moto-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
+The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (NUCLEO-H755ZI-Q, D-072). The Cortex-M7 of the same chip runs `vehicle-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
 - `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source).
 - `blind_spot/`: 2× 24 GHz radar (own UARTs) → approach logic and false-alarm filter → mirror LEDs.
 - `immobilizer/`: NFC (PN532) primary, PIN as backup → bistable relay on the starter-relay coil.
@@ -30,7 +30,7 @@ The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755*
 
 ## Dependencies
 
-`moto-vehicle-defs` → `external/moto-vehicle-defs` (tagged), only `gen/c/safety/` is included. Signals/IDs are never hand-written.
+`vehicle-defs` → `external/vehicle-defs` (tagged), only `gen/c/safety/` is included. Signals/IDs are never hand-written.
 
 ## Build
 
@@ -38,4 +38,4 @@ CMake + STM32CubeMX (HAL, the CM4 part of the dual-core H755 project) + arm-none
 
 ## Context
 
-`../moto-vehicle-defs/docs/ARCHITECTURE.md` §2-4, §7 · DECISIONS D-041, D-042, D-072 · detail: `../moto-vehicle-defs/docs/hardware-architecture.md` §5b.1-5b.3.
+`../vehicle-defs/docs/ARCHITECTURE.md` §2-4, §7 · DECISIONS D-041, D-042, D-072 · detail: `../vehicle-defs/docs/hardware-architecture.md` §5b.1-5b.3.
