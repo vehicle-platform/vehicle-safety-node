@@ -1,0 +1,9 @@
+# cppcheck suppressions list for the MISRA C:2012 addon (CI step "MISRA C:2012").
+# Every line is a deviation recorded in misra/README.md; add nothing here without a row there.
+misra-c2012-15.5
+misra-c2012-19.2:src/services/mailbox_core.h
+misra-c2012-19.2:src/services/mailbox_core.c
+misra-c2012-19.2:src/services/mailbox.h
+misra-c2012-19.2:src/services/mailbox.c
+misra-c2012-8.7:src/services/mailbox.c
+misra-c2012-8.7:src/services/mailbox_core.c

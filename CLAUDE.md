@@ -4,7 +4,7 @@
 
 ## What this repo is
 
-The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (NUCLEO-H755ZI-Q, D-072). The Cortex-M7 of the same chip runs `vehicle-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
+The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (D-072; prototype board NUCLEO-H745ZI-Q, no CRYP/HASH, D-094). The Cortex-M7 of the same chip runs `vehicle-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
 - `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source).
 - `blind_spot/`: 2× 24 GHz radar (own UARTs) → approach logic and false-alarm filter → mirror LEDs.
 - `immobilizer/`: NFC (PN532) primary, PIN as backup → bistable relay on the starter-relay coil.
@@ -34,7 +34,15 @@ The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755*
 
 ## Build
 
-CMake + STM32CubeMX (HAL, the CM4 part of the dual-core H755 project) + arm-none-eabi-gcc (D-007). Decision logic is pure C without a HAL dependency and is tested under `tests/host/` with Unity (boundary values, E2E error conditions, fallback transitions).
+CMake + arm-none-eabi-gcc (D-007); the CubeMX CM4 project (target STM32H745ZIT6, D-094), startup, linker script and MPU setup come with the board (red zone). Logic is pure C without a HAL dependency, tested under `tests/host/` with Unity (boundary values, E2E error conditions, fallback transitions):
+
+- `cmake --preset host-tests && cmake --build --preset host-tests && ctest --preset host-tests` (ASan + UBSan)
+- `host-tsan` preset: the two-core mailbox stress test under ThreadSanitizer
+- `host-coverage` preset + gcovr (CI floors 95 % lines / 85 % branches)
+- `target-m4-debug` / `target-m4-release`: Cortex-M4F cross build of the same libraries
+- cppcheck 2.22 + MISRA addon (deviations: `misra/README.md`; locally add `--addon-python=/usr/bin/python3` on macOS)
+
+Layout: `src/hal/` (HAL-free interfaces, `hal/host/` models for tests), `src/services/` (mailbox), `src/features/<module>/` (cornering, blind_spot, immobilizer). `services/mailbox_core` and `hal/hsem.h` are forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0) (same D-093 contract, own copy, never included from rt-core).
 
 ## Context
 

@@ -1,0 +1,63 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "host-tests",
+      "displayName": "Host tests (native compiler, Unity + ctest, ASan + UBSan)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host-tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VEHICLE_BUILD_HOST_TESTS": "ON",
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+      }
+    },
+    {
+      "name": "host-coverage",
+      "displayName": "Host tests with gcov line/branch coverage (no sanitizers)",
+      "inherits": "host-tests",
+      "binaryDir": "${sourceDir}/build/host-coverage",
+      "cacheVariables": { "CMAKE_C_FLAGS": "--coverage -O0 -fprofile-update=atomic" }
+    },
+    {
+      "name": "host-tsan",
+      "displayName": "Host tests under ThreadSanitizer (the two-core mailbox model, D-093 item 6)",
+      "inherits": "host-tests",
+      "binaryDir": "${sourceDir}/build/host-tsan",
+      "cacheVariables": { "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -O1 -g" }
+    },
+    {
+      "name": "target-m4-debug",
+      "displayName": "Cortex-M4 cross build (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/target-m4-debug",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "target-m4-release",
+      "displayName": "Cortex-M4 cross build (Release)",
+      "inherits": "target-m4-debug",
+      "binaryDir": "${sourceDir}/build/target-m4-release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "host-tests", "configurePreset": "host-tests" },
+    { "name": "host-coverage", "configurePreset": "host-coverage" },
+    { "name": "host-tsan", "configurePreset": "host-tsan" },
+    { "name": "target-m4-debug", "configurePreset": "target-m4-debug" },
+    { "name": "target-m4-release", "configurePreset": "target-m4-release" }
+  ],
+  "testPresets": [
+    { "name": "host-tests", "configurePreset": "host-tests", "output": { "outputOnFailure": true } },
+    { "name": "host-coverage", "configurePreset": "host-coverage", "output": { "outputOnFailure": true } },
+    {
+      "name": "host-tsan",
+      "configurePreset": "host-tsan",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "name": "test_mailbox_stress$" } }
+    }
+  ]
+}
