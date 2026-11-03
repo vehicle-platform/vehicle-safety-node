@@ -12,7 +12,7 @@
  *     sleep, widening the windows of the two-thread tests).
  * The calling thread's core is thread-local (hsem_host_set_core(), default M4 in this
  * repo; the tests' model of the M7 switches its thread to M7).
- * Forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0) (default core changed).
+ * Forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0; code identical at 333f203, the current fork ref) (default core changed).
  */
 
 #include "hal/hsem.h"

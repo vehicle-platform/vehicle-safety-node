@@ -82,14 +82,16 @@ static bool take_friction(uint32_t now_ms)
         fresh = true;
         ctx.status.mu_e2e =
             platform_ekf_friction_mass_e2e_check(buf, PLATFORM_EKF_FRICTION_MASS_LENGTH, &ctx.mu_rx, now_ms);
-        if (vehicle_e2e_is_valid(ctx.status.mu_e2e) &&
-            (platform_ekf_friction_mass_unpack(&m, buf, PLATFORM_EKF_FRICTION_MASS_LENGTH) == 0) &&
-            cornering_mu_value(m.friction_coeff_state, m.friction_coeff, &ctx.mu_valid_eff)) {
+        if (!vehicle_e2e_is_valid(ctx.status.mu_e2e)) {
+            ctx.status.mu_live = false; /* D-101 item 5: frame lost -> min(last valid, default) */
+            ctx.status.mu_e2e_rejected++;
+        } else if ((platform_ekf_friction_mass_unpack(&m, buf, PLATFORM_EKF_FRICTION_MASS_LENGTH) == 0) &&
+                   cornering_mu_value(m.friction_coeff_state, m.friction_coeff, &ctx.mu_valid_eff)) {
             ctx.have_mu = true;
             ctx.status.mu_live = true;
         } else {
-            ctx.status.mu_live = false; /* D-101 item 5: frame or value lost -> min(last valid, default) */
-            ctx.status.mu_rejected++;
+            ctx.status.mu_live = false; /* D-101 item 5: value unusable -> min(last valid, default) */
+            ctx.status.mu_value_rejected++;
         }
     }
     if (platform_ekf_friction_mass_e2e_check_timeout(&ctx.mu_rx, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {

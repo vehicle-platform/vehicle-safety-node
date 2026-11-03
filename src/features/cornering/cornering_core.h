@@ -70,7 +70,7 @@ float cornering_mu_eff_lost(bool have_last, float last_mu_eff);
  * E2E-valid 0x022: true and *mu_eff set when the value is usable:
  *   ESTIMATED/CLAMPED -> the received value clamped to [clamp_min, clamp_max];
  *   DEFAULT -> max(clamp_min, min(received, friction_coeff_default)).
- * False (*mu_eff unchanged) for INVALID, RESERVED or an unknown state, a raw value outside
+ * False (*mu_eff unchanged) for INVALID (the 2-bit FRICTION_COEFF_STATE has no RESERVED value), a raw value outside
  * the DBC range, a non-finite value or NULL: the caller then uses cornering_mu_eff_lost()
  * (D-101 item 5, which narrows D-029's "INVALID -> default" on this side). */
 bool cornering_mu_value(uint8_t mu_state, uint16_t mu_raw, float* mu_eff);

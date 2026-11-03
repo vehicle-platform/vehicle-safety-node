@@ -55,6 +55,7 @@ typedef struct {
     uint32_t wrong_sequence;
     uint32_t other_bad; /* REPEATED, WRONG_CRC, NO_NEW_DATA at a take, BAD_ARGUMENT */
     uint32_t timeouts;  /* NO_NEW_DATA from the per-pass timeout check after the first frame */
+    uint32_t stale;     /* valid frames whose payload stamp (d[2]) is a cycle old or more */
 } e2e_count_t;
 
 static volatile uint32_t* slot_words(uint32_t slot)
@@ -92,7 +93,7 @@ static void m7_write(uint32_t slot, uint8_t hsem, const uint8_t* d, uint8_t len)
 
 /* The M7's reader of one M4->M7 slot (its forward path) with the receiver's E2E check. */
 static void m7_poll(uint32_t slot, uint8_t hsem, mailbox_reader_t* r, uint16_t data_id, uint8_t max_delta,
-                    uint32_t timeout_ms, vehicle_e2e_rx_state_t* rx, uint32_t now, e2e_count_t* c)
+                    uint32_t timeout_ms, uint32_t cycle_ms, vehicle_e2e_rx_state_t* rx, uint32_t now, e2e_count_t* c)
 {
     mailbox_raw_t raw;
     hal_hsem_key_t key;
@@ -104,7 +105,12 @@ static void m7_poll(uint32_t slot, uint8_t hsem, mailbox_reader_t* r, uint16_t d
     if (mailbox_reader_accept(r, &raw, true, now) == MAILBOX_READ_NEW) {
         uint8_t d[MAILBOX_PAYLOAD_BYTES];
         mailbox_payload_bytes(raw.data, d);
-        count(c, vehicle_e2e_check(data_id, max_delta, timeout_ms, d, r->expected_len, rx, now));
+        const vehicle_e2e_status_t st = vehicle_e2e_check(data_id, max_delta, timeout_ms, d, r->expected_len, rx, now);
+        count(c, st);
+        /* d[2] = the offer's ms (mod 256): a valid frame must be from the current cycle */
+        if (vehicle_e2e_is_valid(st) && ((uint8_t)((uint8_t)(now - START_MS) - d[2]) >= cycle_ms)) {
+            c->stale++;
+        }
     }
 }
 
@@ -185,7 +191,10 @@ static void test_a_whole_refused_cycle_is_exactly_one_counted_gap(void)
 
 /* Outgoing 0x023 and 0x082: the M4 offers each at its cycle; its write is refused on `k`
  * consecutive passes after each offer; the M7 polls both slots every M7_POLL_MS. */
-static void run_outgoing(uint32_t m4_phase, uint32_t m7_phase, uint32_t k, e2e_count_t* warn, e2e_count_t* hbs)
+/* wipe_ms: the M7 layout word reads 0 during the M4 pass in [wipe_ms, wipe_ms + M4_PASS_MS)
+ * (UINT32_MAX: never), restored right after it (D-093 amendment 2). */
+static void run_outgoing(uint32_t m4_phase, uint32_t m7_phase, uint32_t k, uint32_t wipe_ms, e2e_count_t* warn,
+                         e2e_count_t* hbs)
 {
     start();
     vehicle_e2e_tx_state_t tx_warn;
@@ -221,6 +230,7 @@ static void run_outgoing(uint32_t m4_phase, uint32_t m7_phase, uint32_t k, e2e_c
             }
             if ((ms % HBS_CYCLE_MS) < M4_PASS_MS) {
                 (void)memset(d, 0, sizeof d);
+                d[2] = (uint8_t)ms;
                 TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, platform_heartbeat_safety_e2e_protect(d, HBS_LEN, &tx_hbs));
                 TEST_ASSERT_TRUE(mailbox_offer(HBS, d, HBS_LEN));
                 refuse_hbs = k;
@@ -233,15 +243,22 @@ static void run_outgoing(uint32_t m4_phase, uint32_t m7_phase, uint32_t k, e2e_c
                 hsem_host_force_busy(HBS_HSEM, 1u);
                 refuse_hbs--;
             }
+            const bool wipe = (ms >= wipe_ms) && ((ms - wipe_ms) < M4_PASS_MS);
+            if (wipe) {
+                region.word[MAILBOX_M7_LAYOUT_WORD] = 0u;
+            }
             mailbox_step(now);
+            if (wipe) {
+                region.word[MAILBOX_M7_LAYOUT_WORD] = PLATFORM_MAILBOX_LAYOUT_ID; /* the M7's next pass */
+            }
         }
         if (((ms + m7_phase) % M7_POLL_MS) == 0u) {
             m7_poll(WARN, WARN_HSEM, &r_warn, PLATFORM_SAFETY_WARNING_STATUS_E2E_DATA_ID,
                     (uint8_t)PLATFORM_SAFETY_WARNING_STATUS_E2E_MAX_DELTA_COUNTER,
-                    PLATFORM_SAFETY_WARNING_STATUS_E2E_TIMEOUT_MS, &rx_warn, now, warn);
+                    PLATFORM_SAFETY_WARNING_STATUS_E2E_TIMEOUT_MS, WARN_CYCLE_MS, &rx_warn, now, warn);
             m7_poll(HBS, HBS_HSEM, &r_hbs, PLATFORM_HEARTBEAT_SAFETY_E2E_DATA_ID,
                     (uint8_t)PLATFORM_HEARTBEAT_SAFETY_E2E_MAX_DELTA_COUNTER,
-                    PLATFORM_HEARTBEAT_SAFETY_E2E_TIMEOUT_MS, &rx_hbs, now, hbs);
+                    PLATFORM_HEARTBEAT_SAFETY_E2E_TIMEOUT_MS, HBS_CYCLE_MS, &rx_hbs, now, hbs);
         }
     }
 }
@@ -253,14 +270,42 @@ static void test_up_to_three_refused_writes_per_cycle_lose_nothing(void)
             for (uint32_t k = 0u; k <= 3u; k++) {
                 e2e_count_t warn;
                 e2e_count_t hbs;
-                run_outgoing(m4_phase, m7_phase, k, &warn, &hbs);
+                run_outgoing(m4_phase, m7_phase, k, UINT32_MAX, &warn, &hbs);
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, warn.wrong_sequence, "a deferred 0x023 was lost");
                 TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, hbs.wrong_sequence, "a deferred 0x082 was lost");
                 TEST_ASSERT_EQUAL_UINT32(0u, warn.other_bad + hbs.other_bad);
+                TEST_ASSERT_EQUAL_UINT32(0u, warn.stale + hbs.stale);
                 TEST_ASSERT_TRUE(warn.ok >= (CYCLES - 1u)); /* the last offer may still be pending */
                 TEST_ASSERT_TRUE(hbs.ok >= ((CYCLES * WARN_CYCLE_MS) / HBS_CYCLE_MS) - 1u);
                 TEST_ASSERT_EQUAL_UINT32(0u, mailbox_health(START_MS).write_overruns);
             }
+        }
+    }
+}
+
+/* D-093 amendment 2 at the M7's E2E receivers (safety-reviewer 2026-11-04 MINOR-1): the M7
+ * word wiped for the one M4 pass that offers both 0x023 and 0x082 drops both frames; the
+ * M7 sees exactly one WRONG_SEQUENCE per slot, never a stale frame accepted as valid, and
+ * the next frames are OK. Under defer, the held frames would have reached the M7 a pass
+ * later as OK. */
+static void test_a_one_pass_m7_word_wipe_is_one_counted_gap_never_a_stale_frame(void)
+{
+    _Static_assert(((2u * HBS_CYCLE_MS) % WARN_CYCLE_MS) == 0u, "both messages are offered in the wiped pass");
+    _Static_assert((2u * WARN_CYCLE_MS) < PLATFORM_SAFETY_WARNING_STATUS_E2E_TIMEOUT_MS, "the gap stays a sequence error");
+    _Static_assert((2u * HBS_CYCLE_MS) < PLATFORM_HEARTBEAT_SAFETY_E2E_TIMEOUT_MS, "the gap stays a sequence error");
+    for (uint32_t m4_phase = 0u; m4_phase < M4_PASS_MS; m4_phase++) {
+        for (uint32_t m7_phase = 0u; m7_phase < M7_POLL_MS; m7_phase++) {
+            e2e_count_t warn;
+            e2e_count_t hbs;
+            run_outgoing(m4_phase, m7_phase, 0u, 2u * HBS_CYCLE_MS, &warn, &hbs);
+            TEST_ASSERT_EQUAL_UINT32(1u, warn.wrong_sequence);
+            TEST_ASSERT_EQUAL_UINT32(1u, hbs.wrong_sequence);
+            TEST_ASSERT_EQUAL_UINT32(0u, warn.stale + hbs.stale);
+            TEST_ASSERT_EQUAL_UINT32(0u, warn.other_bad + hbs.other_bad);
+            TEST_ASSERT_TRUE(warn.ok >= (CYCLES - 3u)); /* minus the dropped one, its gap, the last pending */
+            const mailbox_health_t h = mailbox_health(START_MS);
+            TEST_ASSERT_EQUAL_UINT32(2u, h.write_dropped);
+            TEST_ASSERT_EQUAL_UINT32(0u, h.write_overruns + h.write_deferred);
         }
     }
 }
@@ -277,5 +322,6 @@ int main(void)
     RUN_TEST(test_up_to_three_refused_reads_per_cycle_lose_nothing);
     RUN_TEST(test_a_whole_refused_cycle_is_exactly_one_counted_gap);
     RUN_TEST(test_up_to_three_refused_writes_per_cycle_lose_nothing);
+    RUN_TEST(test_a_one_pass_m7_word_wipe_is_one_counted_gap_never_a_stale_frame);
     return UNITY_END();
 }

@@ -38,8 +38,9 @@
  * (0x082 NODE_MODE/ERROR_COUNT, a DTC).
  *
  * Writes need a matching peer: an M4->M7 frame is committed only in a pass that sees the
- * M7's layout word equal to the own ID; otherwise it stays pending (and is replaced by the
- * next one, counted). An M7 image with another layout may place its own data at this
+ * M7's layout word equal to the own ID; otherwise it is dropped and counted (write_dropped),
+ * never kept for a later pass (D-093 amendment 2, user 2026-11-04: a held frame could reach
+ * the M7 late with an E2E counter step of 1; the next frame after the match shows the gap). An M7 image with another layout may place its own data at this
  * image's slot offsets, so the M4 never writes there (safety-reviewer MINOR-5). The M7's
  * reader rejects such frames anyway.
  *
@@ -52,8 +53,8 @@
  * match first (D-072 item 4e).
  *
  * services/mailbox_core.[ch] (the pure D-093 item 5 logic, direction-agnostic) is a
- * byte-identical fork of vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after
- * v0.12.0; reviewed there by safety-reviewer), and hal/hsem.h has the same code. safety-node
+ * byte-identical fork of vehicle-rt-core commit 333f203 (the rt-core#63 merge, D-093
+ * amendment 2; reviewed there by safety-reviewer), and hal/hsem.h has the same code. safety-node
  * owns its copies and never includes rt-core sources (D-072 item 6). CI fails when they
  * differ from that pinned commit: the contract changes in both repos together, with
  * safety-reviewer on each, and the pinned commit is moved deliberately.
@@ -95,6 +96,8 @@ typedef struct {
     uint32_t write_done;    /* M4->M7 frames committed */
     uint32_t write_deferred; /* passes a pending M4->M7 frame waited for its HSEM */
     uint32_t write_overruns; /* M4->M7 frames replaced before they were written */
+    uint32_t write_dropped;  /* M4->M7 frames dropped while the M7 layout word differed; also
+                                > 0 after a boot with the M4 first, so never a fault alone */
     uint32_t read_busy;     /* M7->M4 reads with the HSEM not taken */
     uint32_t read_rejected; /* M7->M4 frames dropped: layout mismatch or bad len */
     uint32_t read_frames;   /* M7->M4 frames delivered to the slot buffers */

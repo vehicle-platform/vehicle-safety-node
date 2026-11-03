@@ -32,7 +32,7 @@
  * injected contention. The H7 port comes with the board (red zone): HSEM clock enable,
  * PRIMASK handling, COREID of the CM4, no HAL_HSEM_FastTake loop.
  *
- * Forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0) src/hal/hsem.h (the same interface on both cores);
+ * Forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0; code identical at 333f203, the current fork ref) src/hal/hsem.h (the same interface on both cores);
  * safety-node owns this copy and never includes rt-core sources (D-072 item 6).
  */
 

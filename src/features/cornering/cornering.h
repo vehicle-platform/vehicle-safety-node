@@ -38,7 +38,8 @@ typedef struct {
     bool rt_core_inputs_lost;  /* source NONE (boot included) */
     uint32_t inputs_lost_onsets; /* EKF -> NONE switches (diagnostic, never ERROR_COUNT) */
     uint32_t lean_rejected;    /* taken 0x020 frames not usable (E2E or content) */
-    uint32_t mu_rejected;      /* taken 0x022 frames not E2E-valid or with an unusable value */
+    uint32_t mu_e2e_rejected;   /* taken 0x022 frames not E2E-valid (boot INITIAL included) */
+    uint32_t mu_value_rejected; /* E2E-valid 0x022 frames with an unusable value (D-101 item 5) */
     uint32_t hb_rejected;      /* taken 0x081 frames not E2E-valid or not NORMAL */
     uint32_t lean_timeouts;    /* usable 0x020 stream ended by its E2E timeout */
     uint32_t mu_timeouts;
