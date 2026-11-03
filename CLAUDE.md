@@ -5,7 +5,7 @@
 ## What this repo is
 
 The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (D-072; prototype board NUCLEO-H745ZI-Q, no CRYP/HASH, D-094). The Cortex-M7 of the same chip runs `vehicle-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
-- `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source).
+- `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source). v1 (D-100, C2 PR2): lateral only, no own-IMU estimator yet, so a lost rt-core lean gives UNAVAILABLE; see `src/features/cornering/README.md`.
 - `blind_spot/`: 2× 24 GHz radar (own UARTs) → approach logic and false-alarm filter → mirror LEDs.
 - `immobilizer/`: NFC (PN532) primary, PIN as backup → bistable relay on the starter-relay coil.
 - outputs: the LED ring and the mirror LEDs (Q-026 resolved: driven here, never by rt-core).
@@ -42,7 +42,7 @@ CMake + arm-none-eabi-gcc (D-007); the CubeMX CM4 project (target STM32H745ZIT6,
 - `target-m4-debug` / `target-m4-release`: Cortex-M4F cross build of the same libraries
 - cppcheck 2.22 + MISRA addon (deviations: `misra/README.md`; locally add `--addon-python=/usr/bin/python3` on macOS)
 
-Layout: `src/hal/` (HAL-free interfaces, `hal/host/` models for tests), `src/services/` (mailbox), `src/features/<module>/` (cornering, blind_spot, immobilizer). `services/mailbox_core` and `hal/hsem.h` are forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0) (same D-093 contract, own copy, never included from rt-core).
+Layout: `src/hal/` (HAL-free interfaces, `hal/host/` models for tests), `src/services/` (mailbox), `src/features/<module>/` (cornering; later blind_spot, immobilizer), `src/app/` (the super-loop pass `safety_app` and the 0x082 semantics `node_health_core`, D-101). `app/` is the only composition root: features never include another feature or `app/`, services and hal never include features or `app/`, `app/` gets `now_ms` from its caller and never includes `hal/`, and `*_core` files include no `hal/` or `services/` (CI greps). `services/mailbox_core` and `hal/hsem.h` are forked from vehicle-rt-core commit c7a8243 (the rt-core#62 merge, after v0.12.0) (same D-093 contract, own copy, never included from rt-core).
 
 ## Context
 
