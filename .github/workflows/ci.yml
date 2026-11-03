@@ -1,0 +1,206 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # vehicle-defs is public (D-033), so the submodule needs no extra secret.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # D-003/D-036: consumers pin defs to a release tag, never a branch commit.
+      - name: Defs pin must be a release tag
+        run: |
+          git -C external/vehicle-defs fetch --quiet --depth=1 origin '+refs/tags/*:refs/tags/*'
+          tag=$(git -C external/vehicle-defs tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          test -n "$tag" || { echo "::error::external/vehicle-defs is not pinned to a vX.Y.Z release tag"; exit 1; }
+          echo "defs pin: $tag"
+
+      - name: Install toolchains
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+          cmake --version | head -1
+          arm-none-eabi-gcc --version | head -1
+
+      # The blocking MISRA step needs a fixed cppcheck (Ubuntu's 2.13 misses findings that
+      # 2.22 reports). Same build and cache key as vehicle-rt-core and vehicle-defs.
+      - name: Restore cppcheck 2.22.0
+        id: cppcheck
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/cppcheck
+          key: cppcheck-2.22.0-ubuntu-24.04
+
+      - name: Build cppcheck 2.22.0
+        if: steps.cppcheck.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        run: |
+          git clone --quiet --depth 1 --branch 2.22.0 https://github.com/danmar/cppcheck.git "$RUNNER_TEMP/cppcheck-src"
+          cmake -S "$RUNNER_TEMP/cppcheck-src" -B "$RUNNER_TEMP/cppcheck-build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/cppcheck-build" -j "$(nproc)"
+          cp -r "$RUNNER_TEMP/cppcheck-build/bin" ~/cppcheck
+
+      - name: Save cppcheck 2.22.0
+        if: steps.cppcheck.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/cppcheck
+          key: cppcheck-2.22.0-ubuntu-24.04
+
+      - name: Use cppcheck 2.22.0
+        run: |
+          echo "$HOME/cppcheck" >> "$GITHUB_PATH"
+          "$HOME/cppcheck/cppcheck" --version
+
+      - name: Host tests (ASan + UBSan)
+        run: |
+          cmake --preset host-tests
+          cmake --build --preset host-tests
+          ctest --preset host-tests
+
+      # Coverage of the target code (host-only hal/host excluded).
+      - name: Coverage (gcov + gcovr, floors 95 % lines / 85 % branches)
+        run: |
+          pipx install gcovr >/dev/null
+          cmake --preset host-coverage
+          cmake --build --preset host-coverage
+          ctest --preset host-coverage
+          gcovr -r . --filter 'src/' --exclude 'src/hal/host/' \
+            --exclude-unreachable-branches --exclude-throw-branches \
+            --print-summary --fail-under-line 95 --fail-under-branch 85 build/host-coverage
+
+      - name: Cortex-M4 cross build (Debug + Release)
+        run: |
+          for p in target-m4-debug target-m4-release; do
+            cmake --preset "$p"
+            cmake --build --preset "$p"
+          done
+          arm-none-eabi-size -t build/target-m4-release/src/libvehicle_safety_logic.a \
+            build/target-m4-release/src/libvehicle_safety_fw.a
+
+      # D-093 item 3: a bike image refuses to build while the mailbox address is not
+      # verified on the board. Prove the guard fires against the pinned defs.
+      - name: Bike-image guard (mailbox address not verified)
+        run: |
+          if grep -qE 'PLATFORM_MAILBOX_ADDR_VERIFIED \(0\)' external/vehicle-defs/gen/c/safety/platform_mailbox.h; then
+            if arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -std=c11 -DVEHICLE_SAFETY_BIKE_IMAGE \
+                -I src -I external/vehicle-defs/gen/c/safety -fsyntax-only src/services/mailbox.c 2>/dev/null; then
+              echo "::error::services/mailbox.c built as a bike image with an unverified mailbox address"
+              exit 1
+            fi
+            echo "guard fires as expected"
+          fi
+
+      # The mailbox core and the HSEM interface are a fork of vehicle-rt-core's (one D-093
+      # item 5 contract in both images, never an include across repos). They must equal the
+      # pinned rt-core commit: mailbox_core.[ch] byte for byte, hal/hsem.h without comments.
+      # The contract changes in both repos together, with safety-reviewer on each, and
+      # RTCORE_FORK_REF moves deliberately in the same safety-node PR.
+      - name: Mailbox fork matches the pinned rt-core commit
+        env:
+          RTCORE_FORK_REF: c7a824324e9864ad2c2d8b248ff92f081cef5c81
+        run: |
+          git clone --quiet https://github.com/vehicle-platform/vehicle-rt-core.git "$RUNNER_TEMP/rt"
+          git -C "$RUNNER_TEMP/rt" checkout --quiet "$RTCORE_FORK_REF"
+          for f in src/services/mailbox_core.c src/services/mailbox_core.h; do
+            cmp "$f" "$RUNNER_TEMP/rt/$f" || { echo "::error::$f differs from vehicle-rt-core $RTCORE_FORK_REF"; exit 1; }
+          done
+          gcc -fpreprocessed -dD -E -P src/hal/hsem.h | grep -v '^[[:space:]]*$' > "$RUNNER_TEMP/m4_hsem.txt"
+          gcc -fpreprocessed -dD -E -P "$RUNNER_TEMP/rt/src/hal/hsem.h" | grep -v '^[[:space:]]*$' > "$RUNNER_TEMP/m7_hsem.txt"
+          # An empty strip (a failed gcc) must not pass as equal.
+          grep -q 'hal_hsem_take' "$RUNNER_TEMP/m4_hsem.txt" && grep -q 'hal_hsem_take' "$RUNNER_TEMP/m7_hsem.txt"
+          if ! diff "$RUNNER_TEMP/m4_hsem.txt" "$RUNNER_TEMP/m7_hsem.txt"; then
+            echo "::error::src/hal/hsem.h code differs from vehicle-rt-core $RTCORE_FORK_REF"
+            exit 1
+          fi
+
+      - name: Layering and isolation
+        run: |
+          # The safety image never includes rt-core sources or another node's gen/ (D-072
+          # item 6, D-003): only gen/c/safety of the pinned defs.
+          # Build inputs only (comments may name the fork's origin).
+          if grep -rnE --include='*.c' --include='*.h' '#[[:space:]]*include[[:space:]]*[<"][^">]*(rt_core|vehicle-rt-core|conn/|hil_sim)' src tests \
+              || grep -rnE 'vehicle-rt-core|gen/c/(rt_core|conn|hil_sim)' --include='CMakeLists.txt' --include='*.cmake' CMakeLists.txt src tests cmake; then
+            echo "::error::safety-node uses gen/c/safety only and never rt-core sources"
+            exit 1
+          fi
+          # No heap on the safety partition (CLAUDE.md rule 1, invariant 5).
+          if grep -rnE '\b(malloc|calloc|realloc|free)[[:space:]]*\(' src --include='*.c' --include='*.h' \
+              | grep -v '^src/hal/host/'; then
+            echo "::error::no dynamic memory in the safety partition"
+            exit 1
+          fi
+          # D-093 mailbox: the HSEM interface is used by the mailbox glue only (one accessing
+          # context per slot per core, nothing but the locked-section helpers while a take
+          # holds the interrupt mask), and the pure core stays HAL- and feature-free.
+          if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"hal/hsem\.h"' src \
+              | grep -vE '^src/(services/mailbox\.c|hal/)'; then
+            echo "::error::hal/hsem.h is for src/services/mailbox.c (and hal/) only"
+            exit 1
+          fi
+          if grep -rnE --include='*.c' --include='*.h' 'hal_hsem_(take|release|barrier|release_own)[[:space:]]*\(' src \
+              | grep -vE '^src/(services/mailbox\.c|hal/)'; then
+            echo "::error::the HSEM functions are called by src/services/mailbox.c only"
+            exit 1
+          fi
+          if grep -nE '#include[[:space:]]+"(hal|features)/' src/services/mailbox_core.c src/services/mailbox_core.h; then
+            echo "::error::services/mailbox_core is pure: no hal/ or features/ include"
+            exit 1
+          fi
+
+      - name: Static analysis (cppcheck, blocking)
+        run: |
+          cppcheck --std=c11 --enable=warning,performance,portability \
+            --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem \
+            -I src -I external/vehicle-defs/gen/c/safety src
+
+      # Blocking: cppcheck style + the MISRA C:2012 addon. Deviations are recorded in
+      # misra/README.md and listed in misra/suppressions.txt. Host-only code is left out.
+      - name: Static analysis (cppcheck style + MISRA C:2012, blocking)
+        run: |
+          out=$(cppcheck --std=c11 --enable=style --addon=misra --quiet --suppress=missingIncludeSystem \
+            --template='{id}' misra/canary.c 2>&1)
+          for id in 10.8 15.6 17.7; do
+            echo "$out" | grep -qx "misra-c2012-$id" || { echo "::error::the MISRA addon did not report $id on misra/canary.c"; exit 1; }
+          done
+          if grep -rn 'cppcheck-suppress' src | grep -v 'DEV-[0-9]'; then
+            echo "::error::inline cppcheck suppressions must name a deviation (DEV-xxx) from misra/README.md"
+            exit 1
+          fi
+          cppcheck --std=c11 --enable=style --addon=misra --inline-suppr \
+            --error-exitcode=1 --suppressions-list=misra/suppressions.txt \
+            --suppress=missingIncludeSystem '--suppress=*:*external/*' -i src/hal/host \
+            -I src -I external/vehicle-defs/gen/c/safety src
+
+  # The two-core mailbox model (D-093 item 6) under ThreadSanitizer, which cannot share a
+  # build with ASan: a region word touched without the slot's HSEM fails the job.
+  thread-sanitizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Host tests (ThreadSanitizer)
+        run: |
+          # TSan's shadow memory fails with the runner kernel's 32-bit mmap ASLR entropy.
+          sudo sysctl -w vm.mmap_rnd_bits=28
+          cmake --preset host-tsan
+          cmake --build --preset host-tsan
+          ctest --preset host-tsan

@@ -1,0 +1,15 @@
+# MISRA C:2012 deviation register
+
+CI runs the cppcheck MISRA addon over the target code (`src/`, without the host-only `hal/host`) and **fails on any finding not listed here**. File- and project-scoped deviations are in `suppressions.txt`; single-line ones are inline `// cppcheck-suppress <rule> ; DEV-xxx: <reason>` comments, and CI rejects any inline suppression without a `DEV-` number. Register, list and comments change together, in the same PR, with a reason.
+
+| ID | Rule (category) | Scope | Reason | Compensating measure |
+|---|---|---|---|---|
+| DEV-001 | 15.5 single point of exit (advisory) | project | Early returns for argument and state checks keep the code flat and readable; a single exit would need flag variables and deeper nesting. | Early returns are argument/state guards; every return path is exercised by the host tests (coverage floors in CI); `-Wall -Wextra -Werror` plus cppcheck warning checks are blocking. |
+| DEV-002 | 8.7 no external linkage if used in one unit (advisory) | `services/mailbox.c` (its public API), `services/mailbox_core.c` (`mailbox_pending_drop()`) | The super loop that calls the mailbox API arrives with the Layer 1 inputs (next PR); until then only the host tests call it, which the addon does not scan. `mailbox_pending_drop()` belongs to the mailbox core contract forked from vehicle-rt-core (the M7's forward drops frames); the M4 has no drop path. | Revisit when the super loop links the modules: drop the deviation for any function that stays file-local. Keeping the core identical to rt-core's keeps one reviewed D-093 item 5 contract in both images. |
+| DEV-003 | 19.2 the `union` keyword (advisory) | `services/mailbox_core.h`, `services/mailbox_core.c`, `services/mailbox.h`, `services/mailbox.c` (file-scoped, `mailbox_region_t` only, D-093) | The mailbox region must be accessed with 32-bit loads and stores only (SRAM4 ECC: no sub-word store; D-093 item 5), but the generated `platform_mailbox_t` has byte fields (`len`, `data[8]`). `mailbox_region_t` overlays the generated layout with its 32-bit words, which avoids a pointer cast between object types (11.3, required). | Only `.word[]` is ever accessed; word indices come from the generated `offsetof()` values, and the union size, slot size and field alignment are checked with `_Static_assert` in `mailbox_core.c`. Little-endian is checked at build time. `test_mailbox_core` checks the word view against the generated fields. Same deviation as vehicle-rt-core DEV-004. |
+
+CI builds cppcheck 2.22.0 and caches it. Before the MISRA step it checks that the addon reports 10.8, 15.6 and 17.7 on `misra/canary.c`, so a missing or broken addon never passes as a clean run.
+
+**Generated code:** `external/vehicle-defs/gen/c/safety/` is excluded here (`--suppress=*:*external/*`). It is MISRA-checked, blocking, in vehicle-defs CI (its own register in `misra/README.md` there).
+
+**Local runs (macOS):** Homebrew's python3 may lack `expat`; add `--addon-python=/usr/bin/python3` locally (never in `ci.yml`).
