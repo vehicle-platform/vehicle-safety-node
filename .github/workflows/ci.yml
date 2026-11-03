@@ -152,8 +152,32 @@ jobs:
             echo "::error::the HSEM functions are called by src/services/mailbox.c only"
             exit 1
           fi
-          if grep -nE '#include[[:space:]]+"(hal|features)/' src/services/mailbox_core.c src/services/mailbox_core.h; then
-            echo "::error::services/mailbox_core is pure: no hal/ or features/ include"
+          if grep -nE '#include[[:space:]]+"(hal|features|app)/' src/services/mailbox_core.c src/services/mailbox_core.h; then
+            echo "::error::services/mailbox_core is pure: no hal/, features/ or app/ include"
+            exit 1
+          fi
+          # Layering (architecture-guard on C2 PR2): app/ is the only composition root.
+          # services/ and hal/ never include features/ or app/; a feature never includes
+          # another feature or app/; app/ gets time from its caller, never from hal/.
+          if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"(features|app)/' src/services src/hal; then
+            echo "::error::services/ and hal/ must not include features/ or app/"
+            exit 1
+          fi
+          for dir in src/features/*/; do
+            name=$(basename "$dir")
+            if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"(app/|features/)' "$dir" \
+                | grep -vE "#include[[:space:]]+\"features/${name}/"; then
+              echo "::error::features/${name} must not include app/ or another feature"
+              exit 1
+            fi
+          done
+          if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"hal/' src/app; then
+            echo "::error::app/ must not include hal/ (the caller passes now_ms)"
+            exit 1
+          fi
+          # The pure cores stay HAL- and services-free (host-testable, no RTOS/HAL).
+          if grep -nE '#include[[:space:]]+"(hal|services)/' src/features/*/*_core.[ch] src/app/*_core.[ch]; then
+            echo "::error::*_core files are pure: no hal/ or services/ include"
             exit 1
           fi
 
