@@ -89,7 +89,7 @@ bool cornering_mu_value(uint8_t mu_state, uint16_t mu_raw, float* mu_eff)
                 *mu_eff = fmaxf(PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MIN, fminf(mu, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT));
                 usable = true;
             } else {
-                usable = false; /* INVALID, RESERVED, unknown: D-101 item 5 */
+                usable = false; /* INVALID (the 2-bit state has no other value): D-101 item 5 */
             }
         }
     }

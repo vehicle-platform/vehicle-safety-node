@@ -18,7 +18,7 @@ received through the M7→M4 mailbox (D-072 item 4c, D-093). Decisions: D-041, D
 |---|---|---|
 | 0x081 HeartbeatRtCore | E2E OK (INITIAL is not usable, D-026), NODE_MODE = NORMAL, within its 300 ms E2E timeout | source NONE at once |
 | 0x020 EkfLean | E2E OK, LEAN_ANGLE_STATE ESTIMATED/CLAMPED, raw in the DBC range (\|θ\| ≤ 90°), finite, Q-029 on raw integers (ESTIMATED \|raw\| ≤ clamp, CLAMPED \|raw\| ≥ clamp − one 0.01° step), within its 60 ms E2E timeout | source NONE at once |
-| 0x022 EkfFrictionMass | E2E OK, within its 300 ms timeout, and a usable value: the D-029 rule (ESTIMATED/CLAMPED → clamp [0.1, 1.2]; DEFAULT → max(0.1, min(µ, 0.5))); INVALID/RESERVED/unknown states or a raw value outside the DBC range count as not usable (D-101 item 5) | µ_eff = min(last valid D-029 result, `friction_coeff_default`), or the default with no valid 0x022 since boot (D-101 item 5: a lost low µ never raises µ_eff); 0x022 is not a source criterion (D-042 item 3), so NODE_MODE is unchanged |
+| 0x022 EkfFrictionMass | E2E OK, within its 300 ms timeout, and a usable value: the D-029 rule (ESTIMATED/CLAMPED → clamp [0.1, 1.2]; DEFAULT → max(0.1, min(µ, 0.5))); INVALID (the 2-bit state has no RESERVED value) or a raw value outside the DBC range counts as not usable (D-101 item 5; counted apart from E2E failures: `mu_e2e_rejected` / `mu_value_rejected`) | µ_eff = min(last valid D-029 result, `friction_coeff_default`), or the default with no valid 0x022 since boot (D-101 item 5: a lost low µ never raises µ_eff); 0x022 is not a source criterion (D-042 item 3), so NODE_MODE is unchanged |
 
 ## Source selection (D-042 item 3, D-075 item 6 (4), D-101 item 4)
 

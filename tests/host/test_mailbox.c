@@ -279,19 +279,35 @@ static void test_a_one_pass_wipe_of_the_m7_word_costs_one_frame_and_does_not_lat
 
 static void test_no_write_while_the_peer_layout_differs(void)
 {
+    /* D-093 amendment 2: no store, the frame dropped and counted, and never
+     * written after the match; the next frame is. */
     uint8_t d[MAILBOX_PAYLOAD_BYTES];
     TEST_ASSERT_TRUE(mailbox_init(&region, T0));
     m7_layout(PLATFORM_MAILBOX_LAYOUT_ID ^ 1u);
     frame(3u, WARN_LEN, d);
     TEST_ASSERT_TRUE(mailbox_offer(WARN, d, WARN_LEN));
+    frame(4u, HBS_LEN, d);
+    TEST_ASSERT_TRUE(mailbox_offer(HBS, d, HBS_LEN));
     mailbox_step(T0 + 1u);
     mailbox_step(T0 + 2u);
     TEST_ASSERT_EQUAL_UINT32(0u, slot_words(WARN)[MAILBOX_SEQ_WORD]);
     TEST_ASSERT_EQUAL_UINT32(0u, slot_words(WARN)[MAILBOX_DATA_WORD]);
-    TEST_ASSERT_EQUAL_UINT32(2u, mailbox_health(T0 + 2u).write_deferred);
+    TEST_ASSERT_EQUAL_UINT32(0u, slot_words(HBS)[MAILBOX_SEQ_WORD]);
+    mailbox_health_t h = mailbox_health(T0 + 2u);
+    TEST_ASSERT_EQUAL_UINT32(2u, h.write_dropped);
+    TEST_ASSERT_EQUAL_UINT32(0u, h.write_deferred);
+    TEST_ASSERT_EQUAL_UINT32(0u, h.write_overruns);
     m7_layout(PLATFORM_MAILBOX_LAYOUT_ID);
     mailbox_step(T0 + 3u);
+    TEST_ASSERT_EQUAL_UINT32(0u, slot_words(WARN)[MAILBOX_SEQ_WORD]); /* the dropped frame stays dropped */
+    TEST_ASSERT_EQUAL_UINT32(0u, slot_words(HBS)[MAILBOX_SEQ_WORD]);
+    frame(5u, WARN_LEN, d);
+    TEST_ASSERT_TRUE(mailbox_offer(WARN, d, WARN_LEN));
+    mailbox_step(T0 + 4u);
     TEST_ASSERT_EQUAL_UINT32(1u, slot_words(WARN)[MAILBOX_SEQ_WORD]);
+    h = mailbox_health(T0 + 4u);
+    TEST_ASSERT_EQUAL_UINT32(1u, h.write_done);
+    TEST_ASSERT_EQUAL_UINT32(2u, h.write_dropped);
 }
 
 static void test_an_m4_reset_inside_a_write_continues_the_sequence(void)

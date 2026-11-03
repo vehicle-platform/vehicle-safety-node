@@ -10,6 +10,15 @@
 #endif
 
 _Static_assert(PLATFORM_MAILBOX_SLOT_COUNT == 6u, "k_slots below lists every gen/ slot: update it with the layout");
+/* A dropped or replaced frame must never read as valid on the receiver (OK_SOME_LOST): the
+ * bounded-loss rules of D-093 amendments 1 and 2 need E2E max delta 1 on every slot message
+ * (rt-core asserts the same). */
+_Static_assert(PLATFORM_EKF_LEAN_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
+_Static_assert(PLATFORM_EKF_FRICTION_MASS_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
+_Static_assert(PLATFORM_HEARTBEAT_RT_CORE_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
+_Static_assert(PLATFORM_SAFETY_REQUEST_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
+_Static_assert(PLATFORM_SAFETY_WARNING_STATUS_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
+_Static_assert(PLATFORM_HEARTBEAT_SAFETY_E2E_MAX_DELTA_COUNTER == 1u, "D-093 amendments 1-2 need max delta 1");
 
 /* Slot table, in slot order (checked in mailbox_init()). Everything comes from gen/: the
  * index, HSEM, length and direction of each slot and the gen/ E2E timeout of its message
@@ -158,7 +167,10 @@ static void mbx_write(uint8_t slot, bool peer_layout_ok)
         return;
     }
     if (!peer_layout_ok) {
-        mailbox_pending_defer(p); /* never write into a peer with another layout */
+        /* never write into a peer with another layout, and never keep the frame for later:
+         * held through a mismatch it could reach the M7 stale with a counter step of 1
+         * (D-093 amendment 2) */
+        mailbox_pending_drop(p);
         return;
     }
     hal_hsem_key_t key;
@@ -261,6 +273,7 @@ mailbox_health_t mailbox_health(uint32_t now_ms)
             h.write_done = mbx_sat_add(h.write_done, p->done);
             h.write_deferred = mbx_sat_add(h.write_deferred, p->deferred);
             h.write_overruns = mbx_sat_add(h.write_overruns, p->overruns);
+            h.write_dropped = mbx_sat_add(h.write_dropped, p->dropped);
         }
     }
     h.read_frames = s_mbx.read_frames;

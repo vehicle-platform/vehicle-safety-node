@@ -107,7 +107,7 @@ jobs:
       # RTCORE_FORK_REF moves deliberately in the same safety-node PR.
       - name: Mailbox fork matches the pinned rt-core commit
         env:
-          RTCORE_FORK_REF: c7a824324e9864ad2c2d8b248ff92f081cef5c81
+          RTCORE_FORK_REF: 333f20353dbae90523c997569f3f23183415922a
         run: |
           git clone --quiet https://github.com/vehicle-platform/vehicle-rt-core.git "$RUNNER_TEMP/rt"
           git -C "$RUNNER_TEMP/rt" checkout --quiet "$RTCORE_FORK_REF"

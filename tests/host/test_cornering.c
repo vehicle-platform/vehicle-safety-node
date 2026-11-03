@@ -230,10 +230,14 @@ static void test_friction_invalid_value_keeps_red_then_recovers(void)
     rt.mu_raw = m7_mu_raw(0.3f);
     to_ekf();
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level);
+    const uint32_t value_rejects = cornering_status().mu_value_rejected;
+    const uint32_t e2e_rejects = cornering_status().mu_e2e_rejected;
     rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_INVALID_CHOICE;
     rt.mu_raw = m7_mu_raw(0.9f);
     run_to(800u);
     TEST_ASSERT_FALSE(cornering_status().mu_live);
+    TEST_ASSERT_TRUE(cornering_status().mu_value_rejected > value_rejects); /* a value reject, */
+    TEST_ASSERT_EQUAL_UINT32(e2e_rejects, cornering_status().mu_e2e_rejected); /* not an E2E one */
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.3f, cornering_status().mu_eff);
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level);
     rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE;
@@ -288,7 +292,7 @@ static void test_friction_bad_crc_keeps_the_last_low_mu(void)
     uint8_t f[FB_LEN];
     rt.mu_raw = m7_mu_raw(0.2f);
     to_ekf();
-    before = cornering_status().mu_rejected; /* the boot INITIAL frame counts too */
+    before = cornering_status().mu_e2e_rejected; /* the boot INITIAL frame counts too */
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.2f, cornering_status().mu_eff);
     rt.mu_on = false;
     fb_mu(f, rt.mu_state, rt.mu_raw, &rt.mu_tx);
@@ -297,7 +301,47 @@ static void test_friction_bad_crc_keeps_the_last_low_mu(void)
     run_to(BOOT_EKF_MS + M4_PASS_MS);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_CRC, cornering_status().mu_e2e);
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.2f, cornering_status().mu_eff); /* min(last valid, default) */
-    TEST_ASSERT_EQUAL_UINT32(before + 1u, cornering_status().mu_rejected);
+    TEST_ASSERT_EQUAL_UINT32(before + 1u, cornering_status().mu_e2e_rejected);
+}
+
+/* E-29 (3): an E2E-valid ESTIMATED 0x022 whose raw value is outside the DBC range is an
+ * unusable value (counted apart from E2E failures): mu_eff stays min(last valid, default). */
+static void friction_out_of_range_after(float last_valid_mu, float want_mu_eff)
+{
+    uint8_t f[FB_LEN];
+    rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE;
+    rt.mu_raw = m7_mu_raw(last_valid_mu);
+    to_ekf();
+    const cornering_status_t st0 = cornering_status();
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, last_valid_mu, st0.mu_eff);
+    uint16_t bad = 0u;
+    while ((bad < UINT16_MAX) && platform_ekf_friction_mass_friction_coeff_is_in_range(bad)) {
+        bad++; /* the first raw value gen/ calls out of range */
+    }
+    TEST_ASSERT_FALSE(platform_ekf_friction_mass_friction_coeff_is_in_range(bad));
+    rt.mu_on = false;
+    fb_mu(f, (uint8_t)PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE, bad, &rt.mu_tx);
+    TEST_ASSERT_EQUAL_UINT32(bad, fb_mu_get(f)); /* the raw value fits the signal */
+    m7_write(M7_MU, f);
+    run_to(BOOT_EKF_MS + M4_PASS_MS);
+    const cornering_status_t st = cornering_status();
+    TEST_ASSERT_TRUE(vehicle_e2e_is_valid(st.mu_e2e));
+    TEST_ASSERT_FALSE(st.mu_live);
+    TEST_ASSERT_EQUAL_UINT32(st0.mu_value_rejected + 1u, st.mu_value_rejected);
+    TEST_ASSERT_EQUAL_UINT32(st0.mu_e2e_rejected, st.mu_e2e_rejected);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, want_mu_eff, st.mu_eff); /* min(last valid, default) */
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source); /* 0x022 is no source criterion */
+}
+
+static void test_friction_out_of_range_value_keeps_the_last_low_mu(void)
+{
+    friction_out_of_range_after(0.2f, 0.2f);
+}
+
+/* The escalation path on a value reject: a high last-valid µ falls back to the default. */
+static void test_friction_out_of_range_value_after_a_high_mu_gives_the_default(void)
+{
+    friction_out_of_range_after(0.9f, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT);
 }
 
 static void test_escalates_at_once_and_holds_on_fresh_frames(void)
@@ -334,6 +378,8 @@ int main(void)
     RUN_TEST(test_q029_estimated_above_clamp_drops);
     RUN_TEST(test_friction_rule_and_loss);
     RUN_TEST(test_friction_bad_crc_keeps_the_last_low_mu);
+    RUN_TEST(test_friction_out_of_range_value_keeps_the_last_low_mu);
+    RUN_TEST(test_friction_out_of_range_value_after_a_high_mu_gives_the_default);
     RUN_TEST(test_friction_loss_of_a_high_mu_falls_to_the_default);
     RUN_TEST(test_friction_loss_keeps_red_on_low_mu);
     RUN_TEST(test_skipped_lean_frame_drops_at_once);
