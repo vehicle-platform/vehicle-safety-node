@@ -125,7 +125,8 @@ static void offer_heartbeat(void)
     msg.node_mode = node_health_mode(&app.health, out.source == CORNERING_SOURCE_EKF);
     msg.error_count = node_health_error_count(&app.health);
     msg.uptime = node_health_uptime(&app.health);
-    /* A failed pack sends nothing: the M7 then sees the 0x082 timeout. */
+    /* A failed pack or protect sends nothing (the M7 sees no frame this cycle and, after
+     * a single failure, no counter gap); a failed offer leaves a counter gap. */
     if ((platform_heartbeat_safety_pack_checked(frame, &msg, sizeof frame) == (int)sizeof frame) &&
         vehicle_e2e_is_valid(platform_heartbeat_safety_e2e_protect(frame, sizeof frame, &app.hb_tx)) &&
         mailbox_offer((uint8_t)PLATFORM_MAILBOX_SLOT_HEARTBEAT_SAFETY_INDEX, frame, (uint8_t)sizeof frame)) {

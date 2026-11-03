@@ -37,6 +37,7 @@ The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755*
 CMake + arm-none-eabi-gcc (D-007); the CubeMX CM4 project (target STM32H745ZIT6, D-094), startup, linker script and MPU setup come with the board (red zone). Logic is pure C without a HAL dependency, tested under `tests/host/` with Unity (boundary values, E2E error conditions, fallback transitions):
 
 - `cmake --preset host-tests && cmake --build --preset host-tests && ctest --preset host-tests` (ASan + UBSan)
+- `test_safety_app_faults` (part of host-tests): fault injection into the 0x023/0x082 output paths through a second copy of `app/safety_app.c` whose pack/protect/offer calls are renamed to test seams (compile definitions in `tests/host/CMakeLists.txt`; any linker, no `-Wl,--wrap`)
 - `host-tsan` preset: the two-core mailbox stress test under ThreadSanitizer
 - `host-coverage` preset + gcovr (CI floors 95 % lines / 85 % branches)
 - `target-m4-debug` / `target-m4-release`: Cortex-M4F cross build of the same libraries

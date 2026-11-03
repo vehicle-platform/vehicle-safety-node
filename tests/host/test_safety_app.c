@@ -10,6 +10,7 @@
 
 #include "m7_model.h"
 #include "platform_e2e.h"
+#include "services/mailbox.h"
 
 #include <unity.h>
 
@@ -19,6 +20,7 @@ typedef struct {
     uint32_t frames;
     uint32_t bad; /* E2E results other than OK / INITIAL */
     uint32_t initial;
+    vehicle_e2e_status_t last_st;
     uint8_t last[FB_LEN];
 } m7_sink_t;
 
@@ -49,6 +51,7 @@ static void sink_poll(m7_sink_t* s, uint32_t slot, uint16_t id, uint8_t max_delt
         } else if (st != VEHICLE_E2E_OK) {
             s->bad++;
         }
+        s->last_st = st;
         (void)memcpy(s->last, d, FB_LEN);
     }
 }
@@ -265,6 +268,65 @@ static void test_late_pass_resyncs_the_grid(void)
     TEST_ASSERT_EQUAL_UINT32(0u, warn.bad);
 }
 
+/* E-29 (7), safety-reviewer test 2 of safety-node#11: the M4 boots first (no M7 word yet,
+ * every outgoing frame dropped, D-093 amendment 2), then the M7 word appears inside the
+ * D-101 item 3 budget: the first 0x023/0x082 at the M7 are INITIAL, then OK; no output
+ * fault and no own fault counted. */
+static void test_boot_m4_first_then_the_m7_word_appears(void)
+{
+    start(false);
+    run_to(500u);
+    TEST_ASSERT_EQUAL_UINT32(0u, warn.frames + hbs.frames);
+    TEST_ASSERT_TRUE(mailbox_health(now).write_dropped > 0u); /* normal at boot, never a fault alone */
+    m7_set_layout(PLATFORM_MAILBOX_LAYOUT_ID);
+    run_to(700u);
+    TEST_ASSERT_TRUE(warn.frames > 1u);
+    TEST_ASSERT_EQUAL_UINT32(1u, warn.initial);
+    TEST_ASSERT_EQUAL_UINT32(0u, warn.bad);
+    TEST_ASSERT_TRUE(hbs.frames > 1u);
+    TEST_ASSERT_EQUAL_UINT32(1u, hbs.initial);
+    TEST_ASSERT_EQUAL_UINT32(0u, hbs.bad);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode()); /* not on EKF yet */
+}
+
+/* E-29 (7), safety-reviewer MINOR-2 of safety-node#11 (pinned, accepted as fail-safe): a
+ * pass gap ends in the pass at 600, which offers the 0x082 of that cycle as DEGRADED (the
+ * 0x082 grid is 0, 100, ...); the M7 word reads 0 during the pass at 602 that would write
+ * it, so it is dropped together with the 0x023 of 600. The DEGRADED frame never reaches the
+ * M7. The 0x082 of 700 is rejected as WRONG_SEQUENCE (its NORMAL/EC 1 content unused), and
+ * since WRONG_SEQUENCE does not refresh the receive time, the 0x082 of 800 is the first one
+ * accepted, exactly at the 300 ms timeout after the last OK (502). */
+static void test_a_dropped_heartbeat_carries_away_the_degraded_hold(void)
+{
+    start(true);
+    run_to(594u);
+    next_pass = 600u; /* a 6 ms gap: the own fault onset at 600 */
+    run_to(601u);     /* the 0x082 of 600 offered, DEGRADED */
+    TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().pass_gap_faults);
+    TEST_ASSERT_EQUAL_UINT8(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, safety_app_status().last_node_mode);
+    const uint32_t hb_frames = hbs.frames;
+    const uint32_t dropped = mailbox_health(now).write_dropped;
+    m7_set_layout(0u); /* the M7 word wiped for the pass at 602, which writes that 0x082 */
+    run_to(602u);
+    m7_set_layout(PLATFORM_MAILBOX_LAYOUT_ID);
+    TEST_ASSERT_EQUAL_UINT32(dropped + 2u, mailbox_health(now).write_dropped); /* 0x023 + 0x082 of 600 */
+    run_to(650u);
+    TEST_ASSERT_EQUAL_UINT32(hb_frames, hbs.frames); /* never written */
+    TEST_ASSERT_EQUAL_UINT32(1u, warn.bad);          /* the 0x023 gap */
+    run_to(750u);
+    TEST_ASSERT_EQUAL_UINT32(hb_frames + 1u, hbs.frames);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, hbs.last_st); /* the 0x082 of 700: rejected */
+    TEST_ASSERT_EQUAL_UINT32(1u, hbs.bad);
+    run_to(850u);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, hbs.last_st); /* the 0x082 of 800: the first accepted */
+    TEST_ASSERT_EQUAL_UINT32(1u, hbs.initial);       /* boot only */
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(1u, hbs_errors()); /* the onset still counted */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -277,5 +339,7 @@ int main(void)
     RUN_TEST(test_late_pass_resyncs_the_grid);
     RUN_TEST(test_first_pass_only_sets_the_baseline);
     RUN_TEST(test_runs_across_the_ms_wrap);
+    RUN_TEST(test_boot_m4_first_then_the_m7_word_appears);
+    RUN_TEST(test_a_dropped_heartbeat_carries_away_the_degraded_hold);
     return UNITY_END();
 }
