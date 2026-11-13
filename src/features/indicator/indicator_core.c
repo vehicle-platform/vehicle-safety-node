@@ -4,6 +4,9 @@
 
 #include <stddef.h>
 
+_Static_assert(INDICATOR_MAX_LOOP_MS < INDICATOR_HOLD_MS, "the loop period is well below the hold");
+_Static_assert(INDICATOR_HOLD_MS < INDICATOR_STUCK_MS, "the stuck fault is later than the hold");
+
 static void side_init(indicator_side_t *s)
 {
     s->cand_since_ms = 0u;

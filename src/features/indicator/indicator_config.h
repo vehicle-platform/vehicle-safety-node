@@ -2,7 +2,7 @@
 #define FEATURES_INDICATOR_INDICATOR_CONFIG_H
 
 /*
- * Turn-signal input layer constants (D-111, provisional; Q-033). Every value is a
+ * Turn-signal input layer constants (D-075 item 4, D-082; D-111, provisional, defs#165; Q-033). Every value is a
  * compile-time constant in this one header; none comes from vehicle-defs because the
  * signals are the M4's own GPIO inputs, not CAN signals (invariant 2: no CAN ID, signal
  * name or DID is written here).
@@ -30,7 +30,7 @@
 
 /*
  * Hold: a side signals from its first debounced edge until this long after its last
- * debounced edge (D-111 item 2). UN ECE R6 / R48 give 90 +/- 30 flashes/min, so the
+ * debounced edge (D-111 item 2, provisional). UN ECE R6 / R48 give 90 +/- 30 flashes/min, so the
  * slowest flasher (60/min) has a 1 s period; 1.5 s covers one missed flash. The hold also
  * covers the dark half of the cycle, which is why a lit-only reading would flicker.
  */
@@ -43,5 +43,14 @@
  * beyond any flash on-time. A fault is reported as a flag and reads as "not signalling".
  */
 #define INDICATOR_STUCK_MS (3000u)
+
+/*
+ * Maximum period between two step() calls (super loop): 40 ms. With 3 samples within the
+ * 20 ms debounce the loop only needs to be faster than the shortest flash on-time (about
+ * 150 ms at the fastest 120/min with a short duty) divided by a few samples; 40 ms keeps
+ * at least 3 samples inside any real on-time. Documentation only, nothing enforces it; the
+ * tests also run at 50 ms to show the margin.
+ */
+#define INDICATOR_MAX_LOOP_MS (40u)
 
 #endif

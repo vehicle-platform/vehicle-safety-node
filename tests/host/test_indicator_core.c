@@ -1,5 +1,5 @@
 /*
- * L0 tests of the turn-signal input layer (D-111 item 2): debounce, flash trains, the
+ * L0 tests of the turn-signal input layer (D-075 item 4, D-082; D-111, provisional, defs#165): debounce, flash trains, the
  * 1.5 s hold, hazard, stuck-active fault, open wire, 32-bit millisecond wrap, polarity.
  * Pins are active LOW (indicator_config.h): a lit lamp pulls the GPIO to false.
  */
@@ -275,6 +275,138 @@ static void test_the_polarity_is_active_low(void)
     TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
 }
 
+/* ---- sampling-rate and jitter sweeps ------------------------------------------------ */
+
+/* A flash train of the given period/on time sampled every step_ms with +/- step_ms/4
+ * pseudo-random jitter. Counts the samples after the first period that do not read LEFT. */
+static unsigned train_misses(uint32_t period, uint32_t on, uint32_t step, uint32_t t0, unsigned cycles)
+{
+    uint32_t t = t0;
+    uint32_t seed = 12345u;
+    unsigned misses = 0u;
+    while ((uint32_t)(t - t0) < (period * cycles)) {
+        const bool lit = (((uint32_t)(t - t0)) % period) < on;
+        g_o = indicator_core_step(&g_c, t, !lit, true);
+        if (((uint32_t)(t - t0) > period) && (g_o.state != INDICATOR_STATE_LEFT)) {
+            misses++;
+        }
+        seed = (seed * 1103515245u) + 12345u;
+        t += (step - (step / 4u)) + ((seed >> 16) % ((step / 2u) + 1u));
+    }
+    return misses;
+}
+
+static void sweep(uint32_t period, uint32_t on)
+{
+    static const uint32_t steps[] = {1u, 25u, 50u};
+    unsigned i;
+    for (i = 0u; i < 3u; i++) {
+        setUp();
+        TEST_ASSERT_EQUAL_UINT(0u, train_misses(period, on, steps[i], 1000u, 12u));
+        TEST_ASSERT_EQUAL_UINT8(0u, g_o.fault_flags);
+    }
+}
+
+static void test_sweep_60_per_min_short_on_time(void) { sweep(1000u, 300u); }
+static void test_sweep_90_per_min(void) { sweep(667u, 200u); }
+static void test_sweep_120_per_min_short_on_time(void) { sweep(500u, 150u); }
+static void test_hyperflash_180_per_min_reads_left(void) { sweep(333u, 166u); }
+
+/* ---- sample-count and time boundaries ----------------------------------------------- */
+
+static void test_debounce_two_samples_over_20_ms_do_not_switch(void)
+{
+    indicator_core_step(&g_c, 0u, true, true);
+    indicator_core_step(&g_c, 100u, false, true);
+    g_o = indicator_core_step(&g_c, 125u, false, true);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_NONE, g_o.state);
+}
+
+static void test_debounce_three_samples_in_19_ms_do_not_switch(void)
+{
+    indicator_core_step(&g_c, 0u, true, true);
+    indicator_core_step(&g_c, 100u, false, true);
+    indicator_core_step(&g_c, 110u, false, true);
+    g_o = indicator_core_step(&g_c, 119u, false, true);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_NONE, g_o.state);
+}
+
+static void test_debounce_three_samples_in_20_ms_switch(void)
+{
+    indicator_core_step(&g_c, 0u, true, true);
+    indicator_core_step(&g_c, 100u, false, true);
+    indicator_core_step(&g_c, 110u, false, true);
+    g_o = indicator_core_step(&g_c, 120u, false, true);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+}
+
+static void test_stuck_flag_at_exactly_3000_ms_not_2999(void)
+{
+    indicator_core_step(&g_c, 0u, true, true);
+    indicator_core_step(&g_c, 100u, false, true);
+    indicator_core_step(&g_c, 110u, false, true);
+    indicator_core_step(&g_c, 120u, false, true); /* debounced edge at 120 */
+    g_o = indicator_core_step(&g_c, 120u + INDICATOR_STUCK_MS - 1u, false, true);
+    TEST_ASSERT_EQUAL_UINT8(0u, g_o.fault_flags);
+    g_o = indicator_core_step(&g_c, 120u + INDICATOR_STUCK_MS, false, true);
+    TEST_ASSERT_EQUAL_UINT8(INDICATOR_FAULT_LEFT_STUCK, g_o.fault_flags);
+}
+
+static void test_both_sides_stuck_read_none_with_both_flags(void)
+{
+    run(1000u, 6000u, true, true);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_NONE, g_o.state);
+    TEST_ASSERT_EQUAL_UINT8(0x03u, g_o.fault_flags);
+}
+
+/* ---- undetected faults: they CAN read as signalling (escalate-only contract) ---------- */
+
+static void test_frozen_clock_after_signalling_keeps_signalling(void)
+{
+    uint32_t i;
+    flashes(1000u, 3u, 400u, 400u, true, false);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+    for (i = 0u; i < 1000u; i++) {
+        g_o = indicator_core_step(&g_c, 1000u + 2400u, true, true);
+    }
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+}
+
+static void test_lit_line_with_20_ms_dropouts_reads_signalling(void)
+{
+    uint32_t t = 1000u;
+    unsigned i;
+    for (i = 0u; i < 20u; i++) {
+        t = run(t, t + 100u, true, false);
+        t = run(t, t + 25u, false, false);
+    }
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+    TEST_ASSERT_EQUAL_UINT8(0u, g_o.fault_flags);
+}
+
+static void test_lamp_lit_at_boot_or_wrong_polarity_signals_for_the_hold(void)
+{
+    uint32_t t = run(0u, 100u, true, false); /* an idle-low pin reads the same */
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+    t = run(t, INDICATOR_HOLD_MS - 10u, true, false);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_LEFT, g_o.state);
+    t = run(t, INDICATOR_HOLD_MS + 50u, true, false);
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_NONE, g_o.state);
+    run(t, INDICATOR_STUCK_MS + 200u, true, false);
+    TEST_ASSERT_EQUAL_UINT8(INDICATOR_FAULT_LEFT_STUCK, g_o.fault_flags);
+}
+
+static void test_floating_pin_chatter_reads_signalling(void)
+{
+    uint32_t t = 1000u;
+    unsigned i;
+    for (i = 0u; i < 40u; i++) {
+        t = run(t, t + 30u, true, true);
+        t = run(t, t + 30u, false, false);
+    }
+    TEST_ASSERT_EQUAL_INT(INDICATOR_STATE_HAZARD, g_o.state);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -301,5 +433,18 @@ int main(void)
     RUN_TEST(test_a_stale_hold_never_revives_after_a_long_quiet_time);
     RUN_TEST(test_timestamp_that_stops_cannot_start_signalling);
     RUN_TEST(test_the_polarity_is_active_low);
+    RUN_TEST(test_sweep_60_per_min_short_on_time);
+    RUN_TEST(test_sweep_90_per_min);
+    RUN_TEST(test_sweep_120_per_min_short_on_time);
+    RUN_TEST(test_hyperflash_180_per_min_reads_left);
+    RUN_TEST(test_debounce_two_samples_over_20_ms_do_not_switch);
+    RUN_TEST(test_debounce_three_samples_in_19_ms_do_not_switch);
+    RUN_TEST(test_debounce_three_samples_in_20_ms_switch);
+    RUN_TEST(test_stuck_flag_at_exactly_3000_ms_not_2999);
+    RUN_TEST(test_both_sides_stuck_read_none_with_both_flags);
+    RUN_TEST(test_frozen_clock_after_signalling_keeps_signalling);
+    RUN_TEST(test_lit_line_with_20_ms_dropouts_reads_signalling);
+    RUN_TEST(test_lamp_lit_at_boot_or_wrong_polarity_signals_for_the_hold);
+    RUN_TEST(test_floating_pin_chatter_reads_signalling);
     return UNITY_END();
 }

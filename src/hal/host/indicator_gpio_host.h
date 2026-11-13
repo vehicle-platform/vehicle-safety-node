@@ -14,6 +14,9 @@ extern "C" {
 
 void indicator_gpio_host_set(bool left_high, bool right_high);
 
+/* Makes hal_indicator_gpio_read() fail (return false, outputs left untouched) when true. */
+void indicator_gpio_host_set_fail(bool fail);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,19 +2,25 @@
 #define FEATURES_INDICATOR_INDICATOR_CORE_H
 
 /*
- * Pure turn-signal input layer (D-111 item 2, provisional; Q-033; no hal/, no services/).
- * Fed with raw GPIO levels of IND_L and IND_R and a monotonic 32-bit millisecond timestamp,
- * it debounces each input and reports whether the rider is signalling LEFT, RIGHT or
- * HAZARD (both sides at once). Constants and the pin polarity: indicator_config.h.
+ * Pure turn-signal input layer (D-075 item 4, D-082; D-111, provisional, defs#165; no
+ * hal/, no services/). Fed with raw GPIO levels of IND_L and IND_R and a monotonic 32-bit
+ * millisecond timestamp, it debounces each input and reports whether the rider is
+ * signalling LEFT, RIGHT or HAZARD (both sides at once). Constants and the pin polarity:
+ * indicator_config.h.
  *
  * SAFETY CONTRACT (invariants 3 and 8; read before using the output):
  *   The result may only ESCALATE a blind-spot warning (for example let an APPROACHING
  *   vehicle on the signalled side become a stronger warning). It must NEVER suppress or
- *   downgrade a PRESENT or APPROACHING warning. Every failure of this layer reads as
- *   INDICATOR_NONE ("not signalling"): a broken wire, a dead opto, a stuck-active input
- *   (fault flag), no sample yet, a timestamp that stops. With NONE the blind-spot decision
- *   is exactly the one it would be without this module. The blind-spot decision does not
- *   exist yet (radar hardware pending); this module does not implement or assume it.
+ *   downgrade a PRESENT or APPROACHING warning, and it is NOT a health or plausibility
+ *   signal. With INDICATOR_STATE_NONE the blind-spot decision is exactly the one it would
+ *   be without this module.
+ *   Detected faults (open wire, dead opto, stuck-lit > INDICATOR_STUCK_MS) read
+ *   INDICATOR_STATE_NONE. Undetected faults can read as signalling: a frozen clock after
+ *   signalling, a lit line with >= INDICATOR_DEBOUNCE_MS drop-outs, a lamp lit at boot
+ *   (signals up to INDICATOR_HOLD_MS), wrong polarity, a floating pin. Hence signalling may
+ *   only ever be used to escalate.
+ *   The blind-spot decision does not exist yet (radar hardware pending); this module does
+ *   not implement or assume it.
  *
  * Behaviour per side:
  *   - debounce: a level change counts after INDICATOR_DEBOUNCE_SAMPLES consecutive equal
@@ -29,8 +35,9 @@
  *
  * Timing uses unsigned 32-bit subtraction, so a wrap of the millisecond counter (49.7
  * days) is harmless; a hold is dropped as soon as it expires, so a quiet input never
- * reads as signalling again after a wrap. step() must be called at least once per
- * INDICATOR_HOLD_MS in service (it is called every super-loop pass).
+ * reads as signalling again after a wrap. This holds as long as no gap between two step()
+ * calls reaches 2^32 - INDICATOR_HOLD_MS ms; the real timing limit is the super-loop
+ * period of INDICATOR_MAX_LOOP_MS (indicator_config.h).
  * No dynamic memory; all state is in the caller-owned indicator_core_t.
  */
 
