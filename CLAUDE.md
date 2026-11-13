@@ -7,6 +7,7 @@
 The firmware of the **safety partition**: the **Cortex-M4 core of the STM32H755** (D-072; prototype board NUCLEO-H745ZI-Q, no CRYP/HASH, D-094). The Cortex-M7 of the same chip runs `vehicle-rt-core`; this repo builds only the M4 image (flash bank 2, D2 SRAM). Modules, each separate under `src/features/`:
 - `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source). v1 (D-100, C2 PR2): lateral only, no own-IMU estimator yet, so a lost rt-core lean gives UNAVAILABLE; see `src/features/cornering/README.md`.
 - `blind_spot/`: 2× 24 GHz radar (own UARTs) → approach logic and false-alarm filter → mirror LEDs.
+- `indicator/`: the turn-signal input layer (D-111): IND_L/IND_R debounce, signalling window, hazard, stuck fault; may only escalate a blind-spot warning, never suppress one; see `src/features/indicator/README.md`.
 - `immobilizer/`: NFC (PN532) primary, PIN as backup → bistable relay on the starter-relay coil.
 - outputs: the LED ring and the mirror LEDs (Q-026 resolved: driven here, never by rt-core).
 
