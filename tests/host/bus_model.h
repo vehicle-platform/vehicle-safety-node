@@ -27,7 +27,9 @@ static inline void bus_reset(void)
     can_host_reset();
 }
 
-/* The FDCAN filters route 0x120 to the QM FIFO and the other accepted IDs to the safety FIFO. */
+/* The FDCAN acceptance filters reject every ID but the four accepted ones in hardware, so a
+ * real FIFO never holds an unknown ID; the host model lets tests inject one anyway to check
+ * that the link ignores it. The filters route 0x120 to the QM FIFO and the other accepted IDs to the safety FIFO. */
 static inline hal_can_rx_class_t bus_class(uint32_t id)
 {
     return (id == BUS_REQ) ? HAL_CAN_RX_QM : HAL_CAN_RX_SAFETY;

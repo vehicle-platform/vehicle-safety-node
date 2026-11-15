@@ -17,7 +17,11 @@
  * The HAL has two RX classes (hal/can.h): safety (0x020, 0x022, 0x081) and QM (0x120). One
  * pass drains the safety FIFO first, the QM FIFO only with what is left of the burst, so a
  * 0x120 flood can never delay or push out a safety frame. FIFO overflow ("message lost") is
- * reported by the HAL and counted in the health (rx_overflow). All counters are diagnostics,
+ * reported by the HAL and counted in the health (rx_overflow). A rise of the safety-class loss
+ * count during a pass invalidates the pending verdict of the three safety slots for that take
+ * (D-026: a seen loss invalidates the cycle); the consumers fall back and return per the
+ * existing rules. A frame that arrives through the wrong class (e.g. 0x020 via the QM FIFO)
+ * is a filter/configuration fault and is rejected like a wrong DLC (BAD_ARGUMENT). All counters are diagnostics,
  * never decision inputs (the decision sees E2E verdicts and timeouts only).
  *
  * What the link does with a received frame (the E2E profile of D-005, e2e-profile.md, as it
@@ -93,6 +97,7 @@ typedef struct {
     uint32_t e2e_wrong_crc;     /*     CRC (also a wrong Data ID) */
     uint32_t bad_dlc;           /* frames of this ID with a wrong DLC */
     uint32_t rtr_fd;            /* remote-request or FD frames of this ID */
+    uint32_t class_mismatch;    /* frames of this ID that came through the wrong RX FIFO */
     uint32_t take_overruns;     /* frames replaced before a take (several per pass) */
 } platform_link_rx_health_t;
 
@@ -101,6 +106,8 @@ typedef struct {
     platform_link_rx_health_t rx[PLATFORM_LINK_RX_COUNT];
     uint32_t rx_unknown;        /* frames of any other ID, or extended: ignored */
     uint32_t rx_overflow[2];    /* messages lost to a full FIFO, per HAL class (safety, QM) */
+    uint32_t loss_invalidations; /* passes in which a safety-FIFO loss invalidated the safety slots */
+    uint32_t bus_off_episodes;  /* HAL bus-off episodes (diagnosis) */
     uint32_t tx_sent[PLATFORM_LINK_TX_COUNT];
     uint32_t tx_refused[PLATFORM_LINK_TX_COUNT]; /* refused for a bus reason: the sum of: */
     uint32_t tx_fifo_full;      /*     all TX buffers busy */

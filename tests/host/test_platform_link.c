@@ -233,6 +233,87 @@ static void test_a_failure_cannot_be_hidden_by_a_later_good_frame(void)
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_CRC, take_status(PLATFORM_LINK_RX_EKF_LEAN));
 }
 
+/* MINOR-R2-2 (D-026): a safety-FIFO loss during a pass invalidates the pending verdict of the
+ * three safety slots for that take, even for frames that were E2E-valid. */
+static void test_a_safety_fifo_loss_invalidates_the_safety_slots(void)
+{
+    vehicle_e2e_tx_state_t lean_tx, mu_tx, hb_tx;
+    uint8_t f[FB_LEN];
+    vehicle_e2e_tx_init(&lean_tx);
+    vehicle_e2e_tx_init(&mu_tx);
+    vehicle_e2e_tx_init(&hb_tx);
+    for (uint32_t k = 0u; k < 2u; k++) { /* sync all three (INITIAL, then OK) */
+        fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &lean_tx);
+        bus_send(BUS_LEAN, f);
+        fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
+        bus_send(BUS_MU, f);
+        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+        bus_send(BUS_HB, f);
+        platform_link_step(10u + (k * 20u));
+        TEST_ASSERT_EQUAL((k == 0u) ? VEHICLE_E2E_INITIAL : VEHICLE_E2E_OK, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+        TEST_ASSERT_EQUAL((k == 0u) ? VEHICLE_E2E_INITIAL : VEHICLE_E2E_OK, take_status(PLATFORM_LINK_RX_HEARTBEAT_RT_CORE));
+        (void)take_status(PLATFORM_LINK_RX_EKF_FRICTION_MASS);
+    }
+    /* four safety frames at depth 3: the fourth is lost */
+    fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &lean_tx);
+    bus_send(BUS_LEAN, f);
+    fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
+    bus_send(BUS_MU, f);
+    fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+    bus_send(BUS_HB, f);
+    fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &lean_tx);
+    TEST_ASSERT_FALSE(bus_try_send(BUS_LEAN, f));
+    platform_link_step(50u);
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().rx_overflow[0]);
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().loss_invalidations);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, take_status(PLATFORM_LINK_RX_EKF_FRICTION_MASS));
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, take_status(PLATFORM_LINK_RX_HEARTBEAT_RT_CORE));
+    /* the QM slot is not a safety slot */
+    TEST_ASSERT_TRUE(nothing_to_take(PLATFORM_LINK_RX_SAFETY_REQUEST));
+    /* no new loss: the next pass invalidates nothing */
+    platform_link_step(52u);
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().loss_invalidations);
+    TEST_ASSERT_TRUE(nothing_to_take(PLATFORM_LINK_RX_EKF_LEAN));
+}
+
+/* NIT-R2-2: an ID that arrives through the wrong FIFO is a filter fault: rejected, counted. */
+static void test_class_mismatch_is_rejected_and_counted(void)
+{
+    vehicle_e2e_tx_state_t tx;
+    uint8_t f[FB_LEN];
+    hal_can_frame_t x;
+    sync_lean(&tx);
+    fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &tx);
+    (void)memset(&x, 0, sizeof x);
+    x.id = BUS_LEAN;
+    x.dlc = 8u;
+    (void)memcpy(x.data, f, FB_LEN);
+    TEST_ASSERT_TRUE(can_host_inject(HAL_CAN_RX_QM, &x)); /* 0x020 through the QM FIFO */
+    platform_link_step(40u);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_BAD_ARGUMENT, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().rx[PLATFORM_LINK_RX_EKF_LEAN].class_mismatch);
+    x.id = BUS_REQ;
+    TEST_ASSERT_TRUE(can_host_inject(HAL_CAN_RX_SAFETY, &x)); /* 0x120 through the safety FIFO */
+    platform_link_step(42u);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_BAD_ARGUMENT, take_status(PLATFORM_LINK_RX_SAFETY_REQUEST));
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().rx[PLATFORM_LINK_RX_SAFETY_REQUEST].class_mismatch);
+    bus_send(BUS_LEAN, f); /* the genuine frame through the right FIFO is untouched: still OK */
+    platform_link_step(44u);
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+}
+
+/* Optional: bus-off episodes are counted in the health. */
+static void test_bus_off_episodes_are_counted(void)
+{
+    can_host_set_bus_off(true);
+    can_host_set_bus_off(true); /* the same episode */
+    can_host_set_bus_off(false);
+    can_host_set_bus_off(true);
+    platform_link_step(1u);
+    TEST_ASSERT_EQUAL_UINT32(2u, platform_link_health().bus_off_episodes);
+}
+
 static void test_rx_burst_is_bounded(void)
 {
     uint8_t f[FB_LEN] = {0};
@@ -476,6 +557,9 @@ int main(void)
     RUN_TEST(test_masquerade_two_senders_in_one_pass_is_never_valid);
     RUN_TEST(test_a_failure_cannot_be_hidden_by_a_later_good_frame);
     RUN_TEST(test_rx_burst_is_bounded);
+    RUN_TEST(test_a_safety_fifo_loss_invalidates_the_safety_slots);
+    RUN_TEST(test_class_mismatch_is_rejected_and_counted);
+    RUN_TEST(test_bus_off_episodes_are_counted);
     RUN_TEST(test_aligned_burst_with_depth_three_loses_nothing);
     RUN_TEST(test_safety_class_is_drained_before_the_qm_class);
     RUN_TEST(test_qm_flood_never_costs_a_safety_frame);

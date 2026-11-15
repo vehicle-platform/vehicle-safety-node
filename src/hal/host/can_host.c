@@ -16,6 +16,7 @@ static uint32_t tx_depth = CAN_HOST_FIFO_DEPTH_DEFAULT;
 static bool initialised;
 static bool init_fails;
 static bool bus_is_off;
+static uint32_t bus_off_episodes;
 static uint32_t refuse_sends;
 static uint32_t tx_accepted_count;
 static uint32_t tx_refused_count;
@@ -85,6 +86,7 @@ void can_host_reset(void)
     initialised = false;
     init_fails = false;
     bus_is_off = false;
+    bus_off_episodes = 0u;
     refuse_sends = 0u;
     tx_accepted_count = 0u;
     tx_refused_count = 0u;
@@ -147,6 +149,11 @@ uint32_t hal_can_rx_lost(hal_can_rx_class_t rx_class)
     return ((uint32_t)rx_class < (uint32_t)HAL_CAN_RX_CLASS_COUNT) ? rx_lost[rx_class] : 0u;
 }
 
+uint32_t hal_can_bus_off_count(void)
+{
+    return bus_off_episodes;
+}
+
 bool can_host_inject(hal_can_rx_class_t rx_class, const hal_can_frame_t* frame)
 {
     bool ok = false;
@@ -171,6 +178,9 @@ void can_host_refuse_next_sends(uint32_t n)
 
 void can_host_set_bus_off(bool bus_off)
 {
+    if (bus_off && !bus_is_off) {
+        bus_off_episodes++;
+    }
     bus_is_off = bus_off;
     if (bus_off) {
         (void)tx_cancel_id(0u, true);

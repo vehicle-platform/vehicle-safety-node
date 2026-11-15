@@ -328,6 +328,31 @@ static void test_fake_next_counter_in_another_pass_is_used_once_then_caught(void
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
 }
 
+/* MINOR-R2-2 (D-026) at the decision level: four safety frames in one pass at FIFO depth 3
+ * (the fourth is lost). The three that arrive are E2E-valid, but the seen loss invalidates the
+ * cycle: no EKF use in that pass. Then the existing return rules apply (ten usable frames). */
+static void test_a_safety_fifo_loss_is_never_used_as_ekf(void)
+{
+    uint8_t f[FB_LEN];
+    to_ekf();
+    run_to(390u);
+    fb_lean(f, rt.lean_state, rt.lean_raw, &rt.lean_tx);
+    bus_send(BUS_LEAN, f);
+    fb_mu(f, rt.mu_state, rt.mu_raw, &rt.mu_tx);
+    bus_send(BUS_MU, f);
+    fb_hb(f, rt.hb_mode, &rt.hb_tx);
+    bus_send(BUS_HB, f);
+    fb_lean(f, rt.lean_state, rt.lean_raw, &rt.lean_tx);
+    TEST_ASSERT_FALSE(bus_try_send(BUS_LEAN, f)); /* lost: FIFO depth 3 */
+    run_to(392u);
+    TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().rx_overflow[0]);
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
+    TEST_ASSERT_TRUE(cornering_status().rt_core_inputs_lost);
+    run_to(400u + ((CORNERING_RETURN_FRAMES + 3u) * PLATFORM_EKF_LEAN_CYCLE_TIME_MS));
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source); /* back per the existing rules */
+}
+
 static void test_skipped_lean_frame_drops_at_once(void)
 {
     uint8_t f[FB_LEN];
@@ -441,6 +466,7 @@ int main(void)
     RUN_TEST(test_d119_no_0x022_ever_uses_the_default);
     RUN_TEST(test_friction_loss_keeps_red_on_low_mu);
     RUN_TEST(test_fake_next_counter_in_another_pass_is_used_once_then_caught);
+    RUN_TEST(test_a_safety_fifo_loss_is_never_used_as_ekf);
     RUN_TEST(test_skipped_lean_frame_drops_at_once);
     RUN_TEST(test_friction_invalid_value_keeps_red_then_recovers);
     RUN_TEST(test_friction_returns_after_a_timeout);
