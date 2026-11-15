@@ -110,10 +110,16 @@ static void test_mu_rule(void)
     const float hi = PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MAX;
     bool ok;
     float v;
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.9f, muv(MU_EST, mu_raw(0.9f), &ok));
+    /* D-119: a lower estimated value is used; one above the default is capped at the default. */
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.3f, muv(MU_EST, mu_raw(0.3f), &ok));
     TEST_ASSERT_TRUE(ok);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.9f, muv(MU_CLA, mu_raw(0.9f), &ok));
-    TEST_ASSERT_EQUAL_FLOAT(hi, muv(MU_EST, mu_raw(1.5f), &ok));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.3f, muv(MU_CLA, mu_raw(0.3f), &ok));
+    TEST_ASSERT_EQUAL_FLOAT(def, muv(MU_EST, mu_raw(0.9f), &ok));
+    TEST_ASSERT_EQUAL_FLOAT(def, muv(MU_CLA, mu_raw(0.9f), &ok));
+    TEST_ASSERT_EQUAL_FLOAT(def, muv(MU_EST, mu_raw(hi), &ok));
+    TEST_ASSERT_EQUAL_FLOAT(def, muv(MU_EST, mu_raw(1.5f), &ok));
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_TRUE(CORNERING_MU_ABOVE_DEFAULT_ACCEPTED == 0);
     TEST_ASSERT_EQUAL_FLOAT(lo, muv(MU_EST, mu_raw(0.05f), &ok));
     TEST_ASSERT_EQUAL_FLOAT(lo, muv(MU_EST, 0u, &ok));
     TEST_ASSERT_TRUE(ok);

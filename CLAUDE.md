@@ -15,7 +15,7 @@ The firmware of the **safety partition**: a **separate STM32G474RE** (Cortex-M4F
 
 - EKF estimation is NOT here: lean and µ come from rt-core over the platform CAN bus (0x020, 0x022), E2E-protected (D-118, D-005). Do not recompute them.
 - No ML. ML can only tighten thresholds (min rule, D-041), never loosen the ceiling; without ML data the decision is unchanged.
-- The platform bus only: it receives 0x020, 0x022, 0x081 (safety inputs, E2E) and 0x120 (QM, immobilizer only, D-072 item 7) and transmits 0x023 and 0x082 itself (D-118). It never touches the vehicle bus (invariant 1); the hardware filter accepts only those four IDs.
+- The platform bus only: it receives 0x020, 0x022, 0x081 (safety inputs, E2E) and 0x120 (QM, immobilizer only, D-072 item 7) and transmits 0x023 and 0x082 itself (D-118). It never touches the vehicle bus (invariant 1); the hardware filters accept only those four IDs in two RX FIFOs (safety: 0x020/0x022/0x081, QM: 0x120; the contract is `src/hal/can.h`), and 0x120 is the immobilizer's input only (CI grep).
 - No QM function (logging, telemetry, derived signals, power management, park mode: rt-core). A new function here needs a decision and `safety-reviewer`.
 - No engine/ECU intervention. Outputs are warnings (LEDs) and the immobilizer relay only.
 
@@ -39,7 +39,7 @@ CMake + arm-none-eabi-gcc (D-007); the CubeMX project (target STM32G474RE, D-118
 
 - `cmake --preset host-tests && cmake --build --preset host-tests && ctest --preset host-tests` (ASan + UBSan)
 - `test_safety_app_faults` (part of host-tests): fault injection into the 0x023/0x082 output paths through a second copy of `app/safety_app.c` whose pack/protect/send calls are renamed to test seams (compile definitions in `tests/host/CMakeLists.txt`; any linker, no `-Wl,--wrap`)
-- `test_platform_link` and `test_safety_app` run on the platform-bus model (`tests/host/bus_model.h` over `hal/host/can_host`): valid frames, timeout, counter jump/freeze, CRC, wrong DLC, unknown IDs, masquerade, 0x120 independence, TX cycle/E2E, refused TX
+- `test_platform_link` and `test_safety_app` run on the platform-bus model (`tests/host/bus_model.h` over `hal/host/can_host`, FIFO depth 3 per class like the G474): valid frames, timeout, counter jump/freeze, CRC, wrong DLC, unknown IDs, masquerade, 0x120 independence, TX cycle/E2E, refused TX
 - `host-coverage` preset + gcovr (CI floors 95 % lines / 85 % branches)
 - `target-g474-debug` / `target-g474-release`: Cortex-M4F cross build of the same libraries
 - cppcheck 2.22 + MISRA addon (deviations: `misra/README.md`; locally add `--addon-python=/usr/bin/python3` on macOS)

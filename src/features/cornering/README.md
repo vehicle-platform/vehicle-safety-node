@@ -37,6 +37,13 @@ received from the platform CAN bus through `services/platform_link` (D-118: the 
   `inputs_lost_onsets`): the node cannot tell a dead rt-core from a platform-bus fault or a
   masquerading sender, so it is never counted as an rt-core fault, never in 0x082 ERROR_COUNT.
 
+## µ cap (D-119, provisional)
+
+rt-core has no 0x022 sender yet (D-118 addendum (a)), so `CORNERING_MU_ABOVE_DEFAULT_ACCEPTED`
+is 0 (`cornering_core.h`): µ_eff = min(D-029 result, `friction_coeff_default`). A valid 0x022
+can lower µ but never raise it above the default; with no 0x022 at all µ_eff is the default and
+the source is still EKF. Lifted only by a later decision with a safety review of a real sender.
+
 ## Decision (D-041, D-100)
 
 - u = tan\|θ\| / µ_eff, division-free: GREEN only if sin\|θ\| < k_yellow·µ·cos\|θ\|, YELLOW

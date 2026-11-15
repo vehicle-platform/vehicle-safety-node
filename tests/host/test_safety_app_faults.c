@@ -36,7 +36,7 @@ int fi_warn_pack(uint8_t* dst_p, const struct platform_safety_warning_status_t* 
 int fi_hbs_pack(uint8_t* dst_p, const struct platform_heartbeat_safety_t* src_p, size_t size);
 vehicle_e2e_status_t fi_warn_protect(uint8_t* data, size_t size, vehicle_e2e_tx_state_t* state);
 vehicle_e2e_status_t fi_hbs_protect(uint8_t* data, size_t size, vehicle_e2e_tx_state_t* state);
-bool fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len);
+platform_link_send_t fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len);
 
 /* The seams must keep the real signatures (the renamed copy of safety_app.c calls them
  * through its own prototypes, in another translation unit): one typed pointer each. */
@@ -48,7 +48,7 @@ static vehicle_e2e_status_t (*const k_chk_warn_protect[2])(uint8_t*, size_t, veh
     platform_safety_warning_status_e2e_protect, fi_warn_protect};
 static vehicle_e2e_status_t (*const k_chk_hbs_protect[2])(uint8_t*, size_t, vehicle_e2e_tx_state_t*) = {
     platform_heartbeat_safety_e2e_protect, fi_hbs_protect};
-static bool (*const k_chk_send[2])(platform_link_tx_t, const uint8_t*, uint8_t) = {platform_link_send, fi_link_send};
+static platform_link_send_t (*const k_chk_send[2])(platform_link_tx_t, const uint8_t*, uint8_t) = {platform_link_send, fi_link_send};
 
 typedef enum { FI_WARN_PACK, FI_HBS_PACK, FI_WARN_PROTECT, FI_HBS_PROTECT, FI_WARN_SEND, FI_HBS_SEND, FI_COUNT } fi_point_t;
 
@@ -98,7 +98,7 @@ vehicle_e2e_status_t fi_hbs_protect(uint8_t* data, size_t size, vehicle_e2e_tx_s
     return platform_heartbeat_safety_e2e_protect(data, size, state);
 }
 
-bool fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
+platform_link_send_t fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
 {
     bool fail = false;
     if (tx == PLATFORM_LINK_TX_SAFETY_WARNING_STATUS) {
@@ -109,7 +109,7 @@ bool fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
         /* another message: never injected */
     }
     if (fail) {
-        return false;
+        return PLATFORM_LINK_SEND_LOCAL_FAULT; /* a local cause: an own output fault */
     }
     return platform_link_send(tx, data, len);
 }

@@ -13,6 +13,7 @@
 #include "bus_model.h"
 #include "features/cornering/cornering.h"
 #include "platform_e2e.h"
+#include "platform_limits.h"
 #include "services/platform_link.h"
 
 #include <unity.h>
@@ -32,7 +33,7 @@ static vehicle_e2e_tx_state_t masq_tx;
 static uint32_t masq_pass_ekf; /* passes after the masquerade started that still used EKF */
 static uint32_t masq_pass_n;
 static bool masq_started; /* the first fake frame was injected */
-typedef enum { REQ_OFF, REQ_VALID, REQ_CORRUPT, REQ_WRONG_DLC } req_mode_t;
+typedef enum { REQ_OFF, REQ_VALID, REQ_CORRUPT, REQ_WRONG_DLC, REQ_FLOOD } req_mode_t;
 static req_mode_t req_mode;
 static vehicle_e2e_tx_state_t req_tx;
 
@@ -60,17 +61,23 @@ static void run_to(uint32_t t_end)
         rt_core_tick(&rt, now);
         if (masq_on && ((now % PLATFORM_EKF_LEAN_CYCLE_TIME_MS) == 0u)) {
             uint8_t f[FB_LEN];
-            fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, bus_lean_raw(60.0f), &masq_tx);
-            bus_send(BUS_LEAN, f);
+            fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, bus_lean_raw(50.0f), &masq_tx);
+            (void)bus_try_send(BUS_LEAN, f);
             masq_started = true;
         }
-        if ((req_mode != REQ_OFF) && ((now % PLATFORM_SAFETY_REQUEST_CYCLE_TIME_MS) == 0u)) {
+        if (req_mode == REQ_FLOOD) { /* a babbling QM sender: 25 frames per ms = 50 per 2 ms pass */
+            uint8_t f[FB_LEN] = {0};
+            for (uint32_t i = 0u; i < 25u; i++) {
+                (void)vehicle_e2e_protect(PLATFORM_SAFETY_REQUEST_E2E_DATA_ID, f, FB_LEN, &req_tx);
+                (void)bus_try_send(BUS_REQ, f);
+            }
+        } else if ((req_mode != REQ_OFF) && ((now % PLATFORM_SAFETY_REQUEST_CYCLE_TIME_MS) == 0u)) {
             uint8_t f[FB_LEN] = {0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}; /* every request bit set */
             (void)vehicle_e2e_protect(PLATFORM_SAFETY_REQUEST_E2E_DATA_ID, f, FB_LEN, &req_tx);
             if (req_mode == REQ_CORRUPT) {
                 f[0] ^= 0x55u;
             }
-            bus_send_dlc(BUS_REQ, f, (req_mode == REQ_WRONG_DLC) ? 5u : (uint8_t)FB_LEN);
+            (void)bus_try_send_flags(BUS_REQ, f, (req_mode == REQ_WRONG_DLC) ? 5u : (uint8_t)FB_LEN, false, false);
         }
         if ((int32_t)(now - next_pass) >= 0) {
             safety_app_step(now);
@@ -274,10 +281,10 @@ static void test_boot_node_first_then_rt_core_appears(void)
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
 }
 
-/* A refused TX (full FIFO, bus-off) is an own output fault, counted once per refusal, never
- * retried: the 0x023 of 600 is refused, the next one shows the counter gap at the receiver
- * (WRONG_SEQUENCE, never valid), the one after is OK again. */
-static void test_refused_send_is_counted_never_retried(void)
+/* MINOR-1: a TX refused for a bus reason (the TX buffers are full) is counted in the link
+ * health only: no own output fault, no ERROR_COUNT, never retried. The receiver sees the
+ * counter gap: the 0x023 after the refused one is WRONG_SEQUENCE, the one after that is OK. */
+static void test_bus_refused_send_is_counted_never_retried_and_no_own_fault(void)
 {
     start();
     run_to(594u);
@@ -286,7 +293,10 @@ static void test_refused_send_is_counted_never_retried(void)
     can_host_refuse_next_sends(1u);
     run_to(600u); /* the 0x023 of 600 is the first send of this pass */
     TEST_ASSERT_EQUAL_UINT32(1u, can_host_tx_refused());
-    TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().warn_bus_refused);
+    TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().link_tx_refused);
     TEST_ASSERT_EQUAL_UINT32(sent, safety_app_status().warn_sent);
     TEST_ASSERT_EQUAL_UINT32(1u, platform_link_health().tx_refused[PLATFORM_LINK_TX_SAFETY_WARNING_STATUS]);
     run_to(610u); /* no retry in the passes between the cycles */
@@ -296,11 +306,36 @@ static void test_refused_send_is_counted_never_retried(void)
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, warn.last_st); /* the 0x023 of 620: the counter gap is visible */
     run_to(650u);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, warn.last_st); /* the 0x023 of 640: OK at exactly the 60 ms timeout */
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
 }
 
-/* safety-reviewer MINOR-2 of safety-node#11 on the bus: a pass gap ends in the pass at 600 and
- * a refused 0x082 of that cycle (it carries DEGRADED) is not sent; the next one is
- * WRONG_SEQUENCE at the receiver (counter gap), never silently valid. */
+/* MINOR-1 test: every send refused for 5 s by "no ACK / bus-off" leaves ERROR_COUNT, the own
+ * fault bits and NODE_MODE untouched on the node's own side; the receiver (rt-core) sees
+ * silence and handles it. Afterwards the node transmits again (E2E resync at the receiver)
+ * and ERROR_COUNT is still 0. */
+static void test_five_seconds_of_bus_off_leaves_error_count_unchanged(void)
+{
+    start();
+    run_to(1000u);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    can_host_set_bus_off(true);
+    run_to(6000u);
+    TEST_ASSERT_TRUE(safety_app_status().link_tx_refused > 200u);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().level_faults);
+    TEST_ASSERT_TRUE(platform_link_health().tx_bus_off > 200u);
+    TEST_ASSERT_EQUAL_UINT32(0u, can_host_tx_pending()); /* nothing stale queued */
+    can_host_set_bus_off(false);
+    run_to(6300u);
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+}
+
+/* A refused 0x082 (it carries DEGRADED after a pass gap) is a bus refusal: no own fault of its
+ * own, and the DEGRADED window stays open, so the next 0x082 still carries it. Its counter gap
+ * is WRONG_SEQUENCE at the receiver, never silently valid. */
 static void test_refused_heartbeat_is_a_visible_gap(void)
 {
     start();
@@ -311,7 +346,8 @@ static void test_refused_heartbeat_is_a_visible_gap(void)
     run_to(601u);
     TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().pass_gap_faults);
     TEST_ASSERT_EQUAL_UINT32(2u, can_host_tx_refused());
-    TEST_ASSERT_EQUAL_UINT32(2u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults); /* bus reasons only */
+    TEST_ASSERT_EQUAL_UINT8(1u, safety_app_status().error_count);     /* the pass gap */
     const uint32_t hb_frames = hbs.frames;
     run_to(650u);
     TEST_ASSERT_EQUAL_UINT32(hb_frames, hbs.frames); /* nothing sent in the cycle */
@@ -319,11 +355,12 @@ static void test_refused_heartbeat_is_a_visible_gap(void)
     run_to(750u);
     TEST_ASSERT_EQUAL_UINT32(hb_frames + 1u, hbs.frames);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, hbs.last_st);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode()); /* the window stayed open */
     run_to(850u);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, hbs.last_st);
 }
 
-/* D-118 masquerade: a second sender of 0x020 (here a RED-level 60 degrees with a valid CRC
+/* D-118 masquerade: a second sender of 0x020 (here a RED-level 50 degrees with a valid CRC
  * and its own counter) interleaves with rt-core's. The link checks every frame, so the
  * counter sequence breaks (WRONG_SEQUENCE) in the very pass: from the first fake frame on the
  * EKF source is never used, the ring shows UNAVAILABLE / NONE (v1 has no own-IMU estimator,
@@ -376,6 +413,88 @@ static void test_safety_request_never_influences_the_decision(void)
     TEST_ASSERT_TRUE(platform_link_health().rx[PLATFORM_LINK_RX_SAFETY_REQUEST].bad_dlc > 0u);
 }
 
+/* MAJOR-1 (a): a 0x120 flood (50 frames per pass) overflows only the QM FIFO. The safety
+ * frames still arrive and are drained first: source stays EKF, GREEN, NORMAL, no error. */
+static void test_safety_request_flood_keeps_the_source_ekf(void)
+{
+    start();
+    req_mode = REQ_FLOOD;
+    run_to(1500u);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_GREEN_CHOICE, warn_level());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
+    TEST_ASSERT_TRUE(platform_link_health().rx_overflow[1] > 1000u); /* the QM FIFO overflowed, counted */
+    TEST_ASSERT_EQUAL_UINT32(0u, platform_link_health().rx_overflow[0]); /* the safety FIFO never */
+}
+
+/* 0x120 never received (rt-core has no sender yet, D-118 addendum (a)): nothing changes in
+ * NODE_MODE, ERROR_COUNT or the outputs; immobilizer state stays UNKNOWN. */
+static void test_no_safety_request_ever_changes_nothing(void)
+{
+    start();
+    run_to(1500u);
+    TEST_ASSERT_FALSE(platform_link_health().rx[PLATFORM_LINK_RX_SAFETY_REQUEST].seen);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
+    TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
+    TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_IMMOBILIZER_STATE_UNKNOWN_CHOICE,
+                             fb_tx_get(warn.last, fb_warn_immobilizer_pack, 8u));
+}
+
+/* MINOR-3: a fake NORMAL 0x081 next to a real rt-core that reports INIT (not NORMAL): the
+ * interleaved senders break the counter sequence, so the heartbeat is never accepted and the
+ * EKF source is never used. */
+static void test_fake_normal_heartbeat_never_enables_ekf(void)
+{
+    vehicle_e2e_tx_state_t fake;
+    uint32_t ekf_passes = 0u;
+    start();
+    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_INIT_CHOICE;
+    vehicle_e2e_tx_init(&fake);
+    fake.counter = 5u;
+    while (now < 2000u) {
+        run_to(now + 1u);
+        if ((now % PLATFORM_HEARTBEAT_RT_CORE_CYCLE_TIME_MS) == 0u) {
+            uint8_t f[FB_LEN];
+            fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &fake);
+            (void)bus_try_send(BUS_HB, f);
+        }
+        if (cornering_output().source == CORNERING_SOURCE_EKF) {
+            ekf_passes++;
+        }
+    }
+    TEST_ASSERT_EQUAL_UINT32(0u, ekf_passes);
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+}
+
+/* MINOR-3: a fake 0x022 (ESTIMATED, mu 1.2, valid CRC, its own counter) next to the real
+ * rt-core 0x022 (DEFAULT 0.5): mu_eff never rises above the default, whatever happens. */
+static void test_fake_0x022_never_raises_mu(void)
+{
+    vehicle_e2e_tx_state_t fake;
+    float max_mu = 0.0f;
+    start();
+    vehicle_e2e_tx_init(&fake);
+    fake.counter = 11u;
+    while (now < 2000u) {
+        run_to(now + 1u);
+        if ((now % PLATFORM_EKF_FRICTION_MASS_CYCLE_TIME_MS) == 50u) {
+            uint8_t f[FB_LEN];
+            fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE, bus_mu_raw(1.2f), &fake);
+            (void)bus_try_send(BUS_MU, f);
+        }
+        if (cornering_status().mu_eff > max_mu) {
+            max_mu = cornering_status().mu_eff;
+        }
+    }
+    TEST_ASSERT_TRUE(max_mu <= PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT);
+    TEST_ASSERT_TRUE(platform_link_health().rx[PLATFORM_LINK_RX_EKF_FRICTION_MASS].e2e_rejected > 5u);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -388,9 +507,14 @@ int main(void)
     RUN_TEST(test_first_pass_only_sets_the_baseline);
     RUN_TEST(test_runs_across_the_ms_wrap);
     RUN_TEST(test_boot_node_first_then_rt_core_appears);
-    RUN_TEST(test_refused_send_is_counted_never_retried);
+    RUN_TEST(test_bus_refused_send_is_counted_never_retried_and_no_own_fault);
+    RUN_TEST(test_five_seconds_of_bus_off_leaves_error_count_unchanged);
     RUN_TEST(test_refused_heartbeat_is_a_visible_gap);
     RUN_TEST(test_masquerade_on_0x020_is_never_used_and_degrades);
     RUN_TEST(test_safety_request_never_influences_the_decision);
+    RUN_TEST(test_safety_request_flood_keeps_the_source_ekf);
+    RUN_TEST(test_no_safety_request_ever_changes_nothing);
+    RUN_TEST(test_fake_normal_heartbeat_never_enables_ekf);
+    RUN_TEST(test_fake_0x022_never_raises_mu);
     return UNITY_END();
 }

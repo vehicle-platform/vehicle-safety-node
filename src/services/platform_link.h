@@ -10,7 +10,15 @@
  *   TX  0x023 SafetyWarningStatus (20 ms), 0x082 HeartbeatSafety (100 ms)   E2E-protected
  *
  * IDs, lengths and E2E parameters come only from the generated code (gen/c/safety). Frames
- * of any other ID and extended frames are ignored and counted.
+ * of any other ID and extended frames are ignored and counted. Remote-request frames and CAN
+ * FD frames are never data (safety-reviewer MAJOR-1 b): on a known ID they reach the consumer
+ * as VEHICLE_E2E_BAD_ARGUMENT like a wrong DLC, on any other ID they are ignored.
+ *
+ * The HAL has two RX classes (hal/can.h): safety (0x020, 0x022, 0x081) and QM (0x120). One
+ * pass drains the safety FIFO first, the QM FIFO only with what is left of the burst, so a
+ * 0x120 flood can never delay or push out a safety frame. FIFO overflow ("message lost") is
+ * reported by the HAL and counted in the health (rx_overflow). All counters are diagnostics,
+ * never decision inputs (the decision sees E2E verdicts and timeouts only).
  *
  * What the link does with a received frame (the E2E profile of D-005, e2e-profile.md, as it
  * ran on the mailbox before):
@@ -31,9 +39,12 @@
  * name it "rt-core inputs lost" and fall back.
  *
  * TX: platform_link_send() hands one finished (packed with pack_checked, E2E-protected)
- * frame to the HAL at once. A refusal is counted and reported to the caller; the link never
- * retries and never loops. The caller's E2E counter has advanced, so the receiver sees a
- * counter gap, which is the intended evidence of a lost frame.
+ * frame to the HAL at once and tells the caller why it was refused: PLATFORM_LINK_SEND_BUS_REFUSED
+ * (TX buffers full, bus-off: bus conditions the node cannot locate, a missing ACK looks the
+ * same) is only counted; PLATFORM_LINK_SEND_LOCAL_FAULT (not initialised, wrong arguments) is a
+ * fault of this node (MINOR-1, the E-28 principle: do not blame what the node cannot locate).
+ * The link never retries and never loops. The caller's E2E counter has advanced, so the
+ * receiver sees a counter gap, which is the intended evidence of a lost frame.
  *
  * Super-loop context only, never from an ISR (the HAL FIFOs are the only cross-context
  * state). One pass: platform_link_step() first (reads at most PLATFORM_LINK_RX_BURST_MAX
@@ -49,9 +60,9 @@
 extern "C" {
 #endif
 
-/* Frames read from the HAL per pass: with the four IDs the bus carries at most about two
- * frames per 5 ms pass (0x020 every 20 ms, the others every 100 ms), so 8 is headroom, and
- * the loop stays bounded. Frames beyond it wait in the HAL FIFO for the next pass. */
+/* Frames read from the HAL per pass, safety class first. The G474 has two RX FIFOs of 3
+ * elements (hal/can.h), so one pass can find at most 3 + 3 frames: 8 covers that with the
+ * loop bounded. A deeper software ring in front of the HAL drains over several passes. */
 #define PLATFORM_LINK_RX_BURST_MAX (8u)
 #define PLATFORM_LINK_PAYLOAD_BYTES (8u)
 
@@ -75,8 +86,13 @@ typedef struct {
     uint32_t last_rx_ms;        /* receive time of the last frame (valid when seen) */
     vehicle_e2e_status_t last_status; /* E2E verdict of the last frame */
     uint32_t frames;            /* frames of this ID with the right DLC */
-    uint32_t e2e_rejected;      /* ... of which not E2E-valid (INITIAL included) */
+    uint32_t e2e_rejected;      /* ... of which not E2E-valid (INITIAL included), the sum of: */
+    uint32_t e2e_initial;       /*     first frame after a start or a timeout (resync) */
+    uint32_t e2e_repeated;      /*     same counter again */
+    uint32_t e2e_wrong_seq;     /*     counter jump beyond MAX_DELTA */
+    uint32_t e2e_wrong_crc;     /*     CRC (also a wrong Data ID) */
     uint32_t bad_dlc;           /* frames of this ID with a wrong DLC */
+    uint32_t rtr_fd;            /* remote-request or FD frames of this ID */
     uint32_t take_overruns;     /* frames replaced before a take (several per pass) */
 } platform_link_rx_health_t;
 
@@ -84,9 +100,13 @@ typedef struct {
     bool initialised;
     platform_link_rx_health_t rx[PLATFORM_LINK_RX_COUNT];
     uint32_t rx_unknown;        /* frames of any other ID, or extended: ignored */
+    uint32_t rx_overflow[2];    /* messages lost to a full FIFO, per HAL class (safety, QM) */
     uint32_t tx_sent[PLATFORM_LINK_TX_COUNT];
-    uint32_t tx_refused[PLATFORM_LINK_TX_COUNT]; /* the HAL refused the frame */
-    uint32_t tx_bad_argument;   /* wrong length or NULL: never sent */
+    uint32_t tx_refused[PLATFORM_LINK_TX_COUNT]; /* refused for a bus reason: the sum of: */
+    uint32_t tx_fifo_full;      /*     all TX buffers busy */
+    uint32_t tx_bus_off;        /*     bus-off */
+    uint32_t tx_bad_argument;   /* local: wrong length or NULL, never sent */
+    uint32_t tx_local_fault;    /* local: the HAL was not initialised or rejected the arguments */
     uint32_t skipped_steps;     /* platform_link_step() calls without a successful init */
 } platform_link_health_t;
 
@@ -111,9 +131,14 @@ bool platform_link_take(platform_link_rx_t rx, uint8_t out[PLATFORM_LINK_PAYLOAD
  * is the next verdict). */
 vehicle_e2e_status_t platform_link_check_timeout(platform_link_rx_t rx, uint32_t now_ms);
 
-/* Sends one frame: len must equal the generated length of the message. False (counted) when
- * the link is not initialised, the arguments are wrong or the HAL refuses. */
-bool platform_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len);
+typedef enum {
+    PLATFORM_LINK_SEND_OK = 0,
+    PLATFORM_LINK_SEND_BUS_REFUSED = 1, /* TX buffers full or bus-off: counted, not an own fault */
+    PLATFORM_LINK_SEND_LOCAL_FAULT = 2  /* not initialised or wrong arguments: an own fault */
+} platform_link_send_t;
+
+/* Sends one frame: len must equal the generated length of the message. Never retries. */
+platform_link_send_t platform_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len);
 
 platform_link_health_t platform_link_health(void);
 

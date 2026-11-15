@@ -83,7 +83,11 @@ bool cornering_mu_value(uint8_t mu_state, uint16_t mu_raw, float* mu_eff)
         const float mu = platform_ekf_friction_mass_friction_coeff_decode(mu_raw);
         if (finite_f(mu)) {
             if (platform_estimate_state_usable(mu_state)) {
-                *mu_eff = fminf(fmaxf(mu, PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MIN), PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MAX);
+                float v = fminf(fmaxf(mu, PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MIN), PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MAX);
+#if (CORNERING_MU_ABOVE_DEFAULT_ACCEPTED == 0)
+                v = fminf(v, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT); /* D-119 */
+#endif
+                *mu_eff = v;
                 usable = true;
             } else if (mu_state == PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE) {
                 *mu_eff = fmaxf(PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MIN, fminf(mu, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT));

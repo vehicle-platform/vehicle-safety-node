@@ -112,6 +112,10 @@ static void handle_frame(const hal_can_frame_t* f, uint32_t now_ms)
     }
     if (!known) {
         lk.health.rx_unknown++;
+    } else if (f->rtr || f->fd) {
+        /* Never data (MAJOR-1 b): same fail-safe treatment as a wrong DLC. */
+        lk.health.rx[i].rtr_fd++;
+        note_frame(i, f->data, 0u, VEHICLE_E2E_BAD_ARGUMENT, now_ms);
     } else if (f->dlc != k_rx[i].length) {
         /* Never passed to the E2E check: it would read bytes that are not there. The consumer
          * sees a failure, so a broken or foreign sender on a safety ID is never usable. */
@@ -122,7 +126,19 @@ static void handle_frame(const hal_can_frame_t* f, uint32_t now_ms)
         vehicle_e2e_status_t st = k_rx[i].check(f->data, k_rx[i].length, &lk.slot[i].e2e, now_ms);
         lk.health.rx[i].frames++;
         if (!vehicle_e2e_is_valid(st)) {
-            lk.health.rx[i].e2e_rejected++;
+            platform_link_rx_health_t* h = &lk.health.rx[i];
+            h->e2e_rejected++;
+            if (st == VEHICLE_E2E_INITIAL) {
+                h->e2e_initial++;
+            } else if (st == VEHICLE_E2E_REPEATED) {
+                h->e2e_repeated++;
+            } else if (st == VEHICLE_E2E_WRONG_SEQUENCE) {
+                h->e2e_wrong_seq++;
+            } else if (st == VEHICLE_E2E_WRONG_CRC) {
+                h->e2e_wrong_crc++;
+            } else {
+                /* NO_NEW_DATA / BAD_ARGUMENT from the check: counted in the sum only */
+            }
         }
         note_frame(i, f->data, k_rx[i].length, st, now_ms);
     }
@@ -136,12 +152,17 @@ void platform_link_step(uint32_t now_ms)
         lk.health.skipped_steps++;
         return;
     }
+    /* Safety class first, the QM class only when the safety FIFO is empty: a 0x120 flood can
+     * never delay a safety frame. Bounded by the burst. */
     for (uint32_t n = 0u; n < PLATFORM_LINK_RX_BURST_MAX; n++) {
-        if (!hal_can_poll(&f)) {
+        if (hal_can_poll(HAL_CAN_RX_SAFETY, &f) || hal_can_poll(HAL_CAN_RX_QM, &f)) {
+            handle_frame(&f, now_ms);
+        } else {
             break;
         }
-        handle_frame(&f, now_ms);
     }
+    lk.health.rx_overflow[0] = hal_can_rx_lost(HAL_CAN_RX_SAFETY);
+    lk.health.rx_overflow[1] = hal_can_rx_lost(HAL_CAN_RX_QM);
 }
 
 bool platform_link_take(platform_link_rx_t rx, uint8_t out[PLATFORM_LINK_PAYLOAD_BYTES], vehicle_e2e_status_t* status)
@@ -166,35 +187,42 @@ vehicle_e2e_status_t platform_link_check_timeout(platform_link_rx_t rx, uint32_t
     return st;
 }
 
-bool platform_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
+platform_link_send_t platform_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
 {
     static const link_tx_desc_t k_tx[PLATFORM_LINK_TX_COUNT] = {
         [PLATFORM_LINK_TX_SAFETY_WARNING_STATUS] = {PLATFORM_SAFETY_WARNING_STATUS_FRAME_ID,
                                                     PLATFORM_SAFETY_WARNING_STATUS_LENGTH},
         [PLATFORM_LINK_TX_HEARTBEAT_SAFETY] = {PLATFORM_HEARTBEAT_SAFETY_FRAME_ID, PLATFORM_HEARTBEAT_SAFETY_LENGTH},
     };
-    bool ok = false;
+    platform_link_send_t result = PLATFORM_LINK_SEND_LOCAL_FAULT;
     hal_can_frame_t f;
 
     if (!lk.ready) {
-        return false;
-    }
-    if (((uint32_t)tx >= (uint32_t)PLATFORM_LINK_TX_COUNT) || (data == NULL) || (len != k_tx[tx].length)) {
+        lk.health.tx_local_fault++;
+    } else if (((uint32_t)tx >= (uint32_t)PLATFORM_LINK_TX_COUNT) || (data == NULL) || (len != k_tx[tx].length)) {
         lk.health.tx_bad_argument++;
-        return false;
-    }
-    (void)memset(&f, 0, sizeof f);
-    f.id = k_tx[tx].id;
-    f.extended = false;
-    f.dlc = len;
-    (void)memcpy(f.data, data, len);
-    ok = hal_can_send(&f);
-    if (ok) {
-        lk.health.tx_sent[tx]++;
     } else {
-        lk.health.tx_refused[tx]++;
+        (void)memset(&f, 0, sizeof f);
+        f.id = k_tx[tx].id;
+        f.dlc = len;
+        (void)memcpy(f.data, data, len);
+        const hal_can_send_t r = hal_can_send(&f);
+        if (r == HAL_CAN_SEND_OK) {
+            lk.health.tx_sent[tx]++;
+            result = PLATFORM_LINK_SEND_OK;
+        } else if ((r == HAL_CAN_SEND_FIFO_FULL) || (r == HAL_CAN_SEND_BUS_OFF)) {
+            lk.health.tx_refused[tx]++;
+            if (r == HAL_CAN_SEND_FIFO_FULL) {
+                lk.health.tx_fifo_full++;
+            } else {
+                lk.health.tx_bus_off++;
+            }
+            result = PLATFORM_LINK_SEND_BUS_REFUSED;
+        } else {
+            lk.health.tx_local_fault++;
+        }
     }
-    return ok;
+    return result;
 }
 
 platform_link_health_t platform_link_health(void)

@@ -96,11 +96,21 @@ static void send_warning(void)
         ok = false;
         (void)memset(frame, 0, sizeof frame); /* the documented fallback: all raw 0 */
     }
-    if (!vehicle_e2e_is_valid(platform_safety_warning_status_e2e_protect(frame, sizeof frame, &app.warn_tx)) ||
-        !platform_link_send(PLATFORM_LINK_TX_SAFETY_WARNING_STATUS, frame, (uint8_t)sizeof frame)) {
+    if (!vehicle_e2e_is_valid(platform_safety_warning_status_e2e_protect(frame, sizeof frame, &app.warn_tx))) {
         ok = false;
     } else {
-        app.status.warn_sent++;
+        /* A refusal for a bus reason (TX buffers full, bus-off: a missing ACK looks the same)
+         * is counted in the link health only, never an own fault (MINOR-1, E-28 principle); the
+         * receiver sees the counter gap. Only local causes are an own output fault. */
+        const platform_link_send_t r =
+            platform_link_send(PLATFORM_LINK_TX_SAFETY_WARNING_STATUS, frame, (uint8_t)sizeof frame);
+        if (r == PLATFORM_LINK_SEND_OK) {
+            app.status.warn_sent++;
+        } else if (r == PLATFORM_LINK_SEND_LOCAL_FAULT) {
+            ok = false;
+        } else {
+            app.status.warn_bus_refused++;
+        }
     }
     if (!ok) {
         app.pending_events |= NODE_FAULT_OUTPUT;
@@ -114,22 +124,32 @@ static void send_heartbeat(void)
     uint8_t frame[PLATFORM_HEARTBEAT_SAFETY_LENGTH];
     cornering_output_t out = cornering_output();
     bool ok = false;
+    bool bus_refused = false;
 
     (void)memset(&msg, 0, sizeof msg);
     msg.node_mode = node_health_mode(&app.health, out.source == CORNERING_SOURCE_EKF);
     msg.error_count = node_health_error_count(&app.health);
     msg.uptime = node_health_uptime(&app.health);
     /* A failed pack or protect sends nothing (rt-core sees no frame this cycle and, after
-     * a single failure, no counter gap); a refused send leaves a counter gap. */
+     * a single failure, no counter gap); a refused send leaves a counter gap. A bus-caused
+     * refusal is not an own fault (MINOR-1) and the DEGRADED window stays open (the frame
+     * was not sent), so the next heartbeat still carries it. */
     if ((platform_heartbeat_safety_pack_checked(frame, &msg, sizeof frame) == (int)sizeof frame) &&
-        vehicle_e2e_is_valid(platform_heartbeat_safety_e2e_protect(frame, sizeof frame, &app.hb_tx)) &&
-        platform_link_send(PLATFORM_LINK_TX_HEARTBEAT_SAFETY, frame, (uint8_t)sizeof frame)) {
-        ok = true;
-        node_health_frame_sent(&app.health);
-        app.status.hb_sent++;
-        app.status.last_node_mode = msg.node_mode;
+        vehicle_e2e_is_valid(platform_heartbeat_safety_e2e_protect(frame, sizeof frame, &app.hb_tx))) {
+        const platform_link_send_t r = platform_link_send(PLATFORM_LINK_TX_HEARTBEAT_SAFETY, frame, (uint8_t)sizeof frame);
+        if (r == PLATFORM_LINK_SEND_OK) {
+            ok = true;
+            node_health_frame_sent(&app.health);
+            app.status.hb_sent++;
+            app.status.last_node_mode = msg.node_mode;
+        } else if (r == PLATFORM_LINK_SEND_BUS_REFUSED) {
+            bus_refused = true;
+            app.status.hb_bus_refused++;
+        } else {
+            /* local fault: ok stays false */
+        }
     }
-    if (!ok) {
+    if (!ok && !bus_refused) {
         app.pending_events |= NODE_FAULT_OUTPUT;
         app.status.output_faults++;
     }

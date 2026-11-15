@@ -115,6 +115,15 @@ jobs:
             echo "::error::the CAN HAL functions are called by src/services/platform_link.c only"
             exit 1
           fi
+          # D-072 item 7 / safety-reviewer MINOR-4: the QM request (0x120) is the immobilizer's
+          # input only. Its slot may be named in src/services/ (and a future
+          # src/features/immobilizer/), nowhere else: it never reaches cornering, blind spot, the
+          # LEDs or app/.
+          if grep -rnE --include='*.c' --include='*.h' 'PLATFORM_LINK_RX_SAFETY_REQUEST|PLATFORM_SAFETY_REQUEST_' src \
+              | grep -vE '^src/(services|features/immobilizer)/'; then
+            echo "::error::0x120 SafetyRequest is used by src/services/ and src/features/immobilizer/ only"
+            exit 1
+          fi
           # Layering (architecture-guard on C2 PR2): app/ is the only composition root.
           # services/ and hal/ never include features/ or app/; a feature never includes
           # another feature or app/; app/ gets time from its caller, never from hal/.

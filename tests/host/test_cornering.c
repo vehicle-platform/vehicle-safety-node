@@ -12,6 +12,7 @@
 #include "platform_limits.h"
 #include "services/platform_link.h"
 
+#include <math.h>
 #include <unity.h>
 
 #define PASS_MS 2u
@@ -194,17 +195,49 @@ static void test_friction_rule_and_loss(void)
     TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source); /* 0x022 is not a source criterion */
 }
 
-static void test_friction_loss_of_a_high_mu_falls_to_the_default(void)
+/* D-119: a valid ESTIMATED 0x022 above the default (here 0.9 and the clamp maximum 1.2) can
+ * never raise mu_eff: it stays the default, so the lean-20 warning is YELLOW (u = 0.73 at 0.5;
+ * it would be GREEN, u = 0.40, at 0.9) before and after the 0x022 goes away. */
+static void test_d119_valid_high_mu_stays_at_the_default(void)
 {
-    rt.lean_raw = bus_lean_raw(20.0f); /* u = 0.40 at mu 0.9 (GREEN), 0.73 at 0.5 (YELLOW) */
+    const float mus[2] = {0.9f, PLATFORM_LIMIT_FRICTION_COEFF_CLAMP_MAX};
+    for (uint32_t i = 0u; i < 2u; i++) {
+        setUp();
+        rt.lean_raw = bus_lean_raw(20.0f);
+        rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE;
+        rt.mu_raw = bus_mu_raw(mus[i]);
+        to_ekf();
+        TEST_ASSERT_TRUE(cornering_status().mu_live); /* valid, only capped */
+        TEST_ASSERT_EQUAL_FLOAT(PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT, cornering_status().mu_eff);
+        TEST_ASSERT_EQUAL(CORNERING_LEVEL_YELLOW, out().level);
+        rt.mu_on = false;
+        run_to(300u + PLATFORM_EKF_FRICTION_MASS_E2E_TIMEOUT_MS + PASS_MS);
+        TEST_ASSERT_EQUAL_FLOAT(PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT, cornering_status().mu_eff);
+        TEST_ASSERT_EQUAL(CORNERING_LEVEL_YELLOW, out().level);
+    }
+}
+
+static void test_d119_valid_lower_mu_is_used(void)
+{
+    rt.lean_raw = bus_lean_raw(12.0f); /* u = 0.43 at 0.5 (GREEN), 0.71 at 0.3 (YELLOW) */
     rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE;
-    rt.mu_raw = bus_mu_raw(0.9f);
+    rt.mu_raw = bus_mu_raw(0.3f);
     to_ekf();
-    TEST_ASSERT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.3f, cornering_status().mu_eff);
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_YELLOW, out().level);
+}
+
+/* D-118 addendum (a): rt-core sends no 0x022 yet. Never received: mu_eff is the default, the
+ * source is EKF and the decision works (GREEN at 12 degrees, u = 0.43). */
+static void test_d119_no_0x022_ever_uses_the_default(void)
+{
     rt.mu_on = false;
-    run_to(300u + PLATFORM_EKF_FRICTION_MASS_E2E_TIMEOUT_MS + PASS_MS);
+    rt.lean_raw = bus_lean_raw(12.0f);
+    to_ekf();
+    TEST_ASSERT_FALSE(cornering_status().mu_live);
     TEST_ASSERT_EQUAL_FLOAT(PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT, cornering_status().mu_eff);
-    TEST_ASSERT_EQUAL(CORNERING_LEVEL_YELLOW, out().level); /* escalation at once */
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source);
 }
 
 static void test_friction_loss_keeps_red_on_low_mu(void)
@@ -243,7 +276,7 @@ static void test_friction_invalid_value_keeps_red_then_recovers(void)
     rt.mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_ESTIMATED_CHOICE;
     run_to(900u); /* the valid 0x022 at 900 */
     TEST_ASSERT_TRUE(cornering_status().mu_live);
-    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.9f, cornering_status().mu_eff);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT, cornering_status().mu_eff); /* 0.9 capped, D-119 */
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level); /* the hold starts at 900 */
     run_to(998u);
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level);
@@ -267,9 +300,32 @@ static void test_friction_returns_after_a_timeout(void)
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level);
     run_to(900u);
     TEST_ASSERT_TRUE(cornering_status().mu_live);
-    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.9f, cornering_status().mu_eff);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT, cornering_status().mu_eff); /* 0.9 capped, D-119 */
     run_to(1000u);
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+}
+
+/* MINOR-3: one fake 0x020 frame with the NEXT counter and a valid CRC, sent in another pass
+ * than rt-core's frames (no interleaving inside a pass), passes the E2E check once: it is used
+ * once and can only raise the level (here RED from a 50 degree lean). rt-core's own frame for
+ * that counter then arrives as REPEATED, so the source drops to NONE at once. */
+static void test_fake_next_counter_in_another_pass_is_used_once_then_caught(void)
+{
+    vehicle_e2e_tx_state_t fake;
+    uint8_t f[FB_LEN];
+    to_ekf();
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+    fake = rt.lean_tx; /* exactly the counter rt-core uses next */
+    fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, bus_lean_raw(50.0f), &fake);
+    run_to(390u); /* rt-core's last frame was 380, the next is 400 */
+    bus_send(BUS_LEAN, f);
+    run_to(392u);
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source);
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_RED, out().level); /* used once, only ever more severe */
+    run_to(402u); /* rt-core's frame of 400 carries the same counter */
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_REPEATED, cornering_status().lean_e2e);
+    TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
 }
 
 static void test_skipped_lean_frame_drops_at_once(void)
@@ -313,7 +369,7 @@ static void friction_out_of_range_after(float last_valid_mu, float want_mu_eff)
     rt.mu_raw = bus_mu_raw(last_valid_mu);
     to_ekf();
     const cornering_status_t st0 = cornering_status();
-    TEST_ASSERT_FLOAT_WITHIN(1e-3f, last_valid_mu, st0.mu_eff);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, fminf(last_valid_mu, PLATFORM_LIMIT_FRICTION_COEFF_DEFAULT), st0.mu_eff); /* D-119 cap */
     uint16_t bad = 0u;
     while ((bad < UINT16_MAX) && platform_ekf_friction_mass_friction_coeff_is_in_range(bad)) {
         bad++; /* the first raw value gen/ calls out of range */
@@ -380,8 +436,11 @@ int main(void)
     RUN_TEST(test_friction_bad_crc_keeps_the_last_low_mu);
     RUN_TEST(test_friction_out_of_range_value_keeps_the_last_low_mu);
     RUN_TEST(test_friction_out_of_range_value_after_a_high_mu_gives_the_default);
-    RUN_TEST(test_friction_loss_of_a_high_mu_falls_to_the_default);
+    RUN_TEST(test_d119_valid_high_mu_stays_at_the_default);
+    RUN_TEST(test_d119_valid_lower_mu_is_used);
+    RUN_TEST(test_d119_no_0x022_ever_uses_the_default);
     RUN_TEST(test_friction_loss_keeps_red_on_low_mu);
+    RUN_TEST(test_fake_next_counter_in_another_pass_is_used_once_then_caught);
     RUN_TEST(test_skipped_lean_frame_drops_at_once);
     RUN_TEST(test_friction_invalid_value_keeps_red_then_recovers);
     RUN_TEST(test_friction_returns_after_a_timeout);

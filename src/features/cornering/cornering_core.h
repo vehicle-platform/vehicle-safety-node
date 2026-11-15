@@ -66,9 +66,18 @@ bool cornering_lean_usable(uint8_t lean_state, int16_t lean_raw, float* lean_deg
  * clamp_min: a lost low mu never raises mu_eff (safety-reviewer MAJOR-1 on C2 PR2). */
 float cornering_mu_eff_lost(bool have_last, float last_mu_eff);
 
+/* D-119 (PROVISIONAL, D-118 addendum (a)): rt-core has no 0x022 sender yet, so a protected
+ * 0x022 from any other node must not be able to loosen the warning. While this is 0, an
+ * estimated friction above friction_coeff_default is NOT accepted: mu_eff = min(the D-029
+ * result, friction_coeff_default) whatever 0x022 says; a lower value is used. Lifted only by
+ * a later decision together with a safety review of a real 0x022 sender. */
+#define CORNERING_MU_ABOVE_DEFAULT_ACCEPTED (0)
+
 /* The D-029 rule (limits/platform_limits.yaml friction_coeff_default) for the value of an
- * E2E-valid 0x022: true and *mu_eff set when the value is usable:
- *   ESTIMATED/CLAMPED -> the received value clamped to [clamp_min, clamp_max];
+ * E2E-valid 0x022, capped by D-119 (CORNERING_MU_ABOVE_DEFAULT_ACCEPTED): true and *mu_eff
+ * set when the value is usable:
+ *   ESTIMATED/CLAMPED -> the received value clamped to [clamp_min, clamp_max], then (D-119)
+ *                        at most friction_coeff_default;
  *   DEFAULT -> max(clamp_min, min(received, friction_coeff_default)).
  * False (*mu_eff unchanged) for INVALID (the 2-bit FRICTION_COEFF_STATE has no RESERVED value), a raw value outside
  * the DBC range, a non-finite value or NULL: the caller then uses cornering_mu_eff_lost()

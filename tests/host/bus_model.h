@@ -27,15 +27,33 @@ static inline void bus_reset(void)
     can_host_reset();
 }
 
-/* A frame of id with dlc data bytes arrives at the node. */
-static inline void bus_send_dlc(uint32_t id, const uint8_t* d, uint8_t dlc)
+/* The FDCAN filters route 0x120 to the QM FIFO and the other accepted IDs to the safety FIFO. */
+static inline hal_can_rx_class_t bus_class(uint32_t id)
+{
+    return (id == BUS_REQ) ? HAL_CAN_RX_QM : HAL_CAN_RX_SAFETY;
+}
+
+/* A frame of id with dlc data bytes arrives at the node; false when its FIFO is full (lost). */
+static inline bool bus_try_send_flags(uint32_t id, const uint8_t* d, uint8_t dlc, bool rtr, bool fd)
 {
     hal_can_frame_t f;
     (void)memset(&f, 0, sizeof f);
     f.id = id;
     f.dlc = dlc;
+    f.rtr = rtr;
+    f.fd = fd;
     (void)memcpy(f.data, d, dlc);
-    TEST_ASSERT_TRUE(can_host_inject(&f));
+    return can_host_inject(bus_class(id), &f);
+}
+
+static inline bool bus_try_send(uint32_t id, const uint8_t* d)
+{
+    return bus_try_send_flags(id, d, (uint8_t)FB_LEN, false, false);
+}
+
+static inline void bus_send_dlc(uint32_t id, const uint8_t* d, uint8_t dlc)
+{
+    TEST_ASSERT_TRUE(bus_try_send_flags(id, d, dlc, false, false));
 }
 
 static inline void bus_send(uint32_t id, const uint8_t* d)
@@ -89,15 +107,15 @@ static inline void rt_core_tick(rt_core_t* m, uint32_t now)
     uint8_t f[FB_LEN];
     if (m->hb_on && ((now % PLATFORM_HEARTBEAT_RT_CORE_CYCLE_TIME_MS) == 0u)) {
         fb_hb(f, m->hb_mode, &m->hb_tx);
-        bus_send(BUS_HB, f);
+        (void)bus_try_send(BUS_HB, f); /* a full FIFO loses the frame, as on the bus */
     }
     if (m->mu_on && ((now % PLATFORM_EKF_FRICTION_MASS_CYCLE_TIME_MS) == 0u)) {
         fb_mu(f, m->mu_state, m->mu_raw, &m->mu_tx);
-        bus_send(BUS_MU, f);
+        (void)bus_try_send(BUS_MU, f);
     }
     if (m->lean_on && ((now % PLATFORM_EKF_LEAN_CYCLE_TIME_MS) == 0u)) {
         fb_lean(f, m->lean_state, m->lean_raw, &m->lean_tx);
-        bus_send(BUS_LEAN, f);
+        (void)bus_try_send(BUS_LEAN, f);
     }
 }
 

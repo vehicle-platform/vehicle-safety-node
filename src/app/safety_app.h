@@ -12,8 +12,8 @@
  *   3. (blind spot, later)
  *   4. outputs               0x023 every 20 ms and 0x082 every 100 ms on a cycle grid of the
  *                            node's own timebase: checked pack, E2E protect, platform_link_send()
- *                            (into the CAN TX FIFO at once; a refusal is an own output fault,
- *                            never retried)
+ *                            (into the CAN TX buffer at once; never retried; a refusal for a
+ *                            bus reason is counted, only a local one is an own output fault)
  *   5. housekeeping          own faults, node health (D-101)
  *   (LED ring driver, immobilizer: later, with the board; the ring driver must honour
  *    D-072 item 5: GREEN never as a static frame.)
@@ -45,6 +45,8 @@ typedef struct {
     uint32_t link_tx_refused;  /* frames the CAN HAL refused (0x023 + 0x082), diagnosis */
     uint32_t link_rx_rejected; /* frames of the four RX IDs that failed DLC or E2E (INITIAL included) */
     uint32_t link_rx_unknown;  /* frames of any other ID, ignored */
+    uint32_t warn_bus_refused; /* 0x023 refused for a bus reason: never an own fault (MINOR-1) */
+    uint32_t hb_bus_refused;   /* the same for 0x082 */
     uint32_t warn_sent;     /* 0x023 frames sent */
     uint32_t hb_sent;       /* 0x082 frames sent */
     uint8_t last_node_mode; /* of the last 0x082 sent */
