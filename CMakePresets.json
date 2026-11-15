@@ -21,43 +21,29 @@
       "cacheVariables": { "CMAKE_C_FLAGS": "--coverage -O0 -fprofile-update=atomic" }
     },
     {
-      "name": "host-tsan",
-      "displayName": "Host tests under ThreadSanitizer (the two-core mailbox model, D-093 item 6)",
-      "inherits": "host-tests",
-      "binaryDir": "${sourceDir}/build/host-tsan",
-      "cacheVariables": { "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -O1 -g" }
-    },
-    {
-      "name": "target-m4-debug",
-      "displayName": "Cortex-M4 cross build (Debug)",
+      "name": "target-g474-debug",
+      "displayName": "Cortex-M4F (STM32G474) cross build (Debug)",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/target-m4-debug",
+      "binaryDir": "${sourceDir}/build/target-g474-debug",
       "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     },
     {
-      "name": "target-m4-release",
-      "displayName": "Cortex-M4 cross build (Release)",
-      "inherits": "target-m4-debug",
-      "binaryDir": "${sourceDir}/build/target-m4-release",
+      "name": "target-g474-release",
+      "displayName": "Cortex-M4F (STM32G474) cross build (Release)",
+      "inherits": "target-g474-debug",
+      "binaryDir": "${sourceDir}/build/target-g474-release",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
     }
   ],
   "buildPresets": [
     { "name": "host-tests", "configurePreset": "host-tests" },
     { "name": "host-coverage", "configurePreset": "host-coverage" },
-    { "name": "host-tsan", "configurePreset": "host-tsan" },
-    { "name": "target-m4-debug", "configurePreset": "target-m4-debug" },
-    { "name": "target-m4-release", "configurePreset": "target-m4-release" }
+    { "name": "target-g474-debug", "configurePreset": "target-g474-debug" },
+    { "name": "target-g474-release", "configurePreset": "target-g474-release" }
   ],
   "testPresets": [
     { "name": "host-tests", "configurePreset": "host-tests", "output": { "outputOnFailure": true } },
-    { "name": "host-coverage", "configurePreset": "host-coverage", "output": { "outputOnFailure": true } },
-    {
-      "name": "host-tsan",
-      "configurePreset": "host-tsan",
-      "output": { "outputOnFailure": true },
-      "filter": { "include": { "name": "test_mailbox_stress$" } }
-    }
+    { "name": "host-coverage", "configurePreset": "host-coverage", "output": { "outputOnFailure": true } }
   ]
 }

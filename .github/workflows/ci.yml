@@ -78,50 +78,14 @@ jobs:
             --exclude-unreachable-branches --exclude-throw-branches \
             --print-summary --fail-under-line 95 --fail-under-branch 85 build/host-coverage
 
-      - name: Cortex-M4 cross build (Debug + Release)
+      - name: Cortex-M4F (STM32G474) cross build (Debug + Release)
         run: |
-          for p in target-m4-debug target-m4-release; do
+          for p in target-g474-debug target-g474-release; do
             cmake --preset "$p"
             cmake --build --preset "$p"
           done
-          arm-none-eabi-size -t build/target-m4-release/src/libvehicle_safety_logic.a \
-            build/target-m4-release/src/libvehicle_safety_fw.a
-
-      # D-093 item 3: a bike image refuses to build while the mailbox address is not
-      # verified on the board. Prove the guard fires against the pinned defs.
-      - name: Bike-image guard (mailbox address not verified)
-        run: |
-          if grep -qE 'PLATFORM_MAILBOX_ADDR_VERIFIED \(0\)' external/vehicle-defs/gen/c/safety/platform_mailbox.h; then
-            if arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -std=c11 -DVEHICLE_SAFETY_BIKE_IMAGE \
-                -I src -I external/vehicle-defs/gen/c/safety -fsyntax-only src/services/mailbox.c 2>/dev/null; then
-              echo "::error::services/mailbox.c built as a bike image with an unverified mailbox address"
-              exit 1
-            fi
-            echo "guard fires as expected"
-          fi
-
-      # The mailbox core and the HSEM interface are a fork of vehicle-rt-core's (one D-093
-      # item 5 contract in both images, never an include across repos). They must equal the
-      # pinned rt-core commit: mailbox_core.[ch] byte for byte, hal/hsem.h without comments.
-      # The contract changes in both repos together, with safety-reviewer on each, and
-      # RTCORE_FORK_REF moves deliberately in the same safety-node PR.
-      - name: Mailbox fork matches the pinned rt-core commit
-        env:
-          RTCORE_FORK_REF: 333f20353dbae90523c997569f3f23183415922a
-        run: |
-          git clone --quiet https://github.com/vehicle-platform/vehicle-rt-core.git "$RUNNER_TEMP/rt"
-          git -C "$RUNNER_TEMP/rt" checkout --quiet "$RTCORE_FORK_REF"
-          for f in src/services/mailbox_core.c src/services/mailbox_core.h; do
-            cmp "$f" "$RUNNER_TEMP/rt/$f" || { echo "::error::$f differs from vehicle-rt-core $RTCORE_FORK_REF"; exit 1; }
-          done
-          gcc -fpreprocessed -dD -E -P src/hal/hsem.h | grep -v '^[[:space:]]*$' > "$RUNNER_TEMP/m4_hsem.txt"
-          gcc -fpreprocessed -dD -E -P "$RUNNER_TEMP/rt/src/hal/hsem.h" | grep -v '^[[:space:]]*$' > "$RUNNER_TEMP/m7_hsem.txt"
-          # An empty strip (a failed gcc) must not pass as equal.
-          grep -q 'hal_hsem_take' "$RUNNER_TEMP/m4_hsem.txt" && grep -q 'hal_hsem_take' "$RUNNER_TEMP/m7_hsem.txt"
-          if ! diff "$RUNNER_TEMP/m4_hsem.txt" "$RUNNER_TEMP/m7_hsem.txt"; then
-            echo "::error::src/hal/hsem.h code differs from vehicle-rt-core $RTCORE_FORK_REF"
-            exit 1
-          fi
+          arm-none-eabi-size -t build/target-g474-release/src/libvehicle_safety_logic.a \
+            build/target-g474-release/src/libvehicle_safety_fw.a
 
       - name: Layering and isolation
         run: |
@@ -139,21 +103,25 @@ jobs:
             echo "::error::no dynamic memory in the safety partition"
             exit 1
           fi
-          # D-093 mailbox: the HSEM interface is used by the mailbox glue only (one accessing
-          # context per slot per core, nothing but the locked-section helpers while a take
-          # holds the interrupt mask), and the pure core stays HAL- and feature-free.
-          if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"hal/hsem\.h"' src \
-              | grep -vE '^src/(services/mailbox\.c|hal/)'; then
-            echo "::error::hal/hsem.h is for src/services/mailbox.c (and hal/) only"
+          # D-118: the CAN HAL interface is used by the platform-bus link service only (one
+          # place decides what is accepted and sent on the platform bus).
+          if grep -rnE --include='*.c' --include='*.h' '#include[[:space:]]+"hal/can\.h"' src \
+              | grep -vE '^src/(services/platform_link\.c|hal/)'; then
+            echo "::error::hal/can.h is for src/services/platform_link.c (and hal/) only"
             exit 1
           fi
-          if grep -rnE --include='*.c' --include='*.h' 'hal_hsem_(take|release|barrier|release_own)[[:space:]]*\(' src \
-              | grep -vE '^src/(services/mailbox\.c|hal/)'; then
-            echo "::error::the HSEM functions are called by src/services/mailbox.c only"
+          if grep -rnE --include='*.c' --include='*.h' 'hal_can_(init|send|poll)[[:space:]]*\(' src \
+              | grep -vE '^src/(services/platform_link\.c|hal/)'; then
+            echo "::error::the CAN HAL functions are called by src/services/platform_link.c only"
             exit 1
           fi
-          if grep -nE '#include[[:space:]]+"(hal|features|app)/' src/services/mailbox_core.c src/services/mailbox_core.h; then
-            echo "::error::services/mailbox_core is pure: no hal/, features/ or app/ include"
+          # D-072 item 7 / safety-reviewer MINOR-4: the QM request (0x120) is the immobilizer's
+          # input only. Its slot may be named in src/services/ (and a future
+          # src/features/immobilizer/), nowhere else: it never reaches cornering, blind spot, the
+          # LEDs or app/.
+          if grep -rnE --include='*.c' --include='*.h' 'PLATFORM_LINK_RX_SAFETY_REQUEST|PLATFORM_SAFETY_REQUEST_' src \
+              | grep -vE '^src/(services|features/immobilizer)/'; then
+            echo "::error::0x120 SafetyRequest is used by src/services/ and src/features/immobilizer/ only"
             exit 1
           fi
           # Layering (architecture-guard on C2 PR2): app/ is the only composition root.
@@ -204,27 +172,3 @@ jobs:
             --error-exitcode=1 --suppressions-list=misra/suppressions.txt \
             --suppress=missingIncludeSystem '--suppress=*:*external/*' -i src/hal/host \
             -I src -I external/vehicle-defs/gen/c/safety src
-
-  # The two-core mailbox model (D-093 item 6) under ThreadSanitizer, which cannot share a
-  # build with ASan: a region word touched without the slot's HSEM fails the job.
-  thread-sanitizer:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Ninja
-        timeout-minutes: 5
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
-
-      - name: Host tests (ThreadSanitizer)
-        run: |
-          # TSan's shadow memory fails with the runner kernel's 32-bit mmap ASLR entropy.
-          sudo sysctl -w vm.mmap_rnd_bits=28
-          cmake --preset host-tsan
-          cmake --build --preset host-tsan
-          ctest --preset host-tsan

@@ -9,7 +9,7 @@
  *               also when rt-core's inputs are lost) or an own fault was active in any pass
  *               since the previous 0x082 frame (an event fault shows in at least one frame,
  *               no further latch); NORMAL otherwise.
- *   ERROR_COUNT onsets of the M4's OWN faults since boot, detected every pass (a level
+ *   ERROR_COUNT onsets of the node's OWN faults since boot, detected every pass (a level
  *               fault on inactive -> active, an event fault once per event), saturating at
  *               the DBC maximum. The loss of rt-core's inputs is never counted (E-28 (1)).
  *   UPTIME      whole seconds since init from wrap-safe ms deltas, saturating.
@@ -23,8 +23,10 @@ extern "C" {
 #endif
 
 /* Own fault bits (D-101 item 2). */
-#define NODE_FAULT_PEER (1u << 0)     /* level: mailbox peer missing or wrong image */
-#define NODE_FAULT_OUTPUT (1u << 1)   /* event: a 0x023/0x082 pack_checked or offer failure */
+#define NODE_FAULT_PEER (1u << 0)     /* level: RETIRED by D-118 ("mailbox peer missing or wrong image"
+                                         has no meaning on the platform bus); the app never sets it, the
+                                         bit keeps its place so the others do not move */
+#define NODE_FAULT_OUTPUT (1u << 1)   /* event: a 0x023/0x082 pack_checked, protect or send failure */
 #define NODE_FAULT_PASS_GAP (1u << 2) /* event: a super-loop pass gap above 5 ms */
 #define NODE_FAULT_ALL (NODE_FAULT_PEER | NODE_FAULT_OUTPUT | NODE_FAULT_PASS_GAP)
 
@@ -56,7 +58,7 @@ void node_health_pass_done(node_health_t* h);
 /* NODE_MODE for a frame built now. */
 uint8_t node_health_mode(const node_health_t* h, bool source_ekf);
 
-/* After a 0x082 frame was offered: starts the next "seen since" window. */
+/* After a 0x082 frame was sent: starts the next "seen since" window. */
 void node_health_frame_sent(node_health_t* h);
 
 uint8_t node_health_error_count(const node_health_t* h);

@@ -2,8 +2,8 @@
 #define TESTS_HOST_FRAME_BUILDER_H
 
 /*
- * Test-only frame builder for the M7 side. Node SAFETY's gen/ has unpack (no pack) for the
- * M7->M4 messages and pack (no unpack) for the M4->M7 ones. To build and read frames without
+ * Test-only frame builder for the rt-core side of the bus. Node SAFETY's gen/ has unpack (no pack) for
+ * the received messages and pack (no unpack) for the transmitted ones. To build and read frames without
  * hand-writing any bit layout (invariant 2), each signal's bit positions are discovered from
  * the generated functions themselves: single-bit probe buffers through unpack (RX) and
  * single-bit raw values through pack (TX). E2E bytes use the generated protect/check.

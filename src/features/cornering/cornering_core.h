@@ -5,7 +5,7 @@
  * Pure Layer 1 cornering logic (no hal/, no services/): input usability, the D-029
  * friction rule, the D-042 item 3 source selection with the D-075 item 6 (4) / D-101
  * item 4 return rule, the division-free D-041 decision and the D-100 item 3 level
- * hysteresis. Host-tested; the glue (cornering.c) feeds it from the mailbox.
+ * hysteresis. Host-tested; the glue (cornering.c) feeds it from the platform-bus link.
  *
  * v1 scope (D-100): lateral only (Q-022 open), no own-IMU estimator (Q-023 (5)/(6) open).
  * The own-IMU source is "not usable" by construction, so whenever rt-core's lean is not
@@ -46,7 +46,7 @@ typedef struct {
 /* D-100 item 3 (provisional, tuned on HIL): a less severe level is taken only after u has
  * stayed below the lower level's threshold minus this margin (absolute u) ... */
 #define CORNERING_HYST_U_MARGIN (0.05f)
-/* ... for this long without a break, on the M4's own timebase (5 frames of 0x020). */
+/* ... for this long without a break, on the node's own timebase (5 frames of 0x020). */
 #define CORNERING_HYST_HOLD_MS (100u)
 /* D-075 item 6 (4), D-101 item 4 (provisional): consecutive usable 0x020 frames, each
  * received while the 0x081 heartbeat is OK and NORMAL, before the source becomes EKF;
@@ -66,9 +66,18 @@ bool cornering_lean_usable(uint8_t lean_state, int16_t lean_raw, float* lean_deg
  * clamp_min: a lost low mu never raises mu_eff (safety-reviewer MAJOR-1 on C2 PR2). */
 float cornering_mu_eff_lost(bool have_last, float last_mu_eff);
 
+/* D-119 (PROVISIONAL, D-118 addendum (a)): rt-core has no 0x022 sender yet, so a protected
+ * 0x022 from any other node must not be able to loosen the warning. While this is 0, an
+ * estimated friction above friction_coeff_default is NOT accepted: mu_eff = min(the D-029
+ * result, friction_coeff_default) whatever 0x022 says; a lower value is used. Lifted only by
+ * a later decision together with a safety review of a real 0x022 sender. */
+#define CORNERING_MU_ABOVE_DEFAULT_ACCEPTED (0)
+
 /* The D-029 rule (limits/platform_limits.yaml friction_coeff_default) for the value of an
- * E2E-valid 0x022: true and *mu_eff set when the value is usable:
- *   ESTIMATED/CLAMPED -> the received value clamped to [clamp_min, clamp_max];
+ * E2E-valid 0x022, capped by D-119 (CORNERING_MU_ABOVE_DEFAULT_ACCEPTED): true and *mu_eff
+ * set when the value is usable:
+ *   ESTIMATED/CLAMPED -> the received value clamped to [clamp_min, clamp_max], then (D-119)
+ *                        at most friction_coeff_default;
  *   DEFAULT -> max(clamp_min, min(received, friction_coeff_default)).
  * False (*mu_eff unchanged) for INVALID (the 2-bit FRICTION_COEFF_STATE has no RESERVED value), a raw value outside
  * the DBC range, a non-finite value or NULL: the caller then uses cornering_mu_eff_lost()
