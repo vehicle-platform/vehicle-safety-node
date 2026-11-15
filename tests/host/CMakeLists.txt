@@ -17,6 +17,8 @@ endfunction()
 
 vehicle_host_test(test_cornering_core)
 vehicle_host_test(test_node_health_core)
+vehicle_host_test(test_indicator_core)
+vehicle_host_test(test_indicator vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_cornering vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_safety_app vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_platform_link vehicle_safety_fw vehicle_safety_hal_host)

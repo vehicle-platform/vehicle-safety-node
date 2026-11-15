@@ -7,6 +7,7 @@
 The firmware of the **safety partition**: a **separate STM32G474RE** (Cortex-M4F 170 MHz, FDCAN; prototype board NUCLEO-G474RE, fallback G431RB; D-118, which supersedes the dual-core H755 partition of D-072). It is a node on the **platform CAN bus** only: own clock, flash, RAM, watchdog and reset, it starts without rt-core. `vehicle-rt-core` runs on its own STM32H743. Modules, each separate under `src/features/`:
 - `cornering/`: the Layer 1 decision (D-041: u = tan|θ| / µ_eff, division-free form, GREEN/YELLOW/RED with hysteresis; no speed, no mass) and the own-IMU fallback (D-042: DEGRADED, UNAVAILABLE, never GREEN without a usable source). v1 (D-100, C2 PR2): lateral only, no own-IMU estimator yet, so a lost rt-core lean gives UNAVAILABLE; see `src/features/cornering/README.md`.
 - `blind_spot/`: 2× 24 GHz radar (own UARTs) → approach logic and false-alarm filter → mirror LEDs.
+- `indicator/`: the turn-signal input layer (D-075 item 4, D-082; D-111, provisional, defs#165): IND_L/IND_R debounce, signalling window, hazard, stuck fault; may only escalate a blind-spot warning, never suppress one; see `src/features/indicator/README.md`.
 - `immobilizer/`: NFC (PN532) primary, PIN as backup → bistable relay on the starter-relay coil.
 - outputs: the LED ring and the mirror LEDs (Q-026 resolved: driven here, never by rt-core).
 
