@@ -11,6 +11,7 @@ target_include_directories(vehicle_defs_gen PUBLIC ${VEHICLE_DEFS_GEN})
 add_library(vehicle_safety_logic STATIC
     services/mailbox_core.c
     features/cornering/cornering_core.c
+    features/indicator/indicator_core.c
     app/node_health_core.c
 )
 target_include_directories(vehicle_safety_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -22,6 +23,7 @@ target_compile_options(vehicle_safety_logic PRIVATE ${VEHICLE_WARNINGS})
 add_library(vehicle_safety_fw STATIC
     services/mailbox.c
     features/cornering/cornering.c
+    features/indicator/indicator.c
     app/safety_app.c
 )
 target_link_libraries(vehicle_safety_fw PUBLIC vehicle_safety_logic)
@@ -31,6 +33,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     # Host models of the HAL interfaces (tests only, never in the M4 image).
     add_library(vehicle_safety_hal_host STATIC
         hal/host/hsem_host.c
+        hal/host/indicator_gpio_host.c
     )
     target_include_directories(vehicle_safety_hal_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_options(vehicle_safety_hal_host PRIVATE -Wall -Wextra -Werror)
