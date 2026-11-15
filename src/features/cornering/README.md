@@ -2,7 +2,7 @@
 
 Responsibility: decide the cornering warning level of the safety partition from rt-core's
 lean (0x020) and friction (0x022) estimates, gated by rt-core's heartbeat (0x081), all
-received through the M7→M4 mailbox (D-072 item 4c, D-093). Decisions: D-041, D-042 items
+received from the platform CAN bus through `services/platform_link` (D-118: the safety MCU is its own STM32G474 node on that bus; a masquerading second sender of an ID breaks the E2E counter sequence and gives the fallback). Decisions: D-041, D-042 items
 3-4, D-029 (µ rule), D-075 items 5-6, D-100, D-101 (item 5: µ on 0x022 loss).
 
 ## Files
@@ -10,9 +10,9 @@ received through the M7→M4 mailbox (D-072 item 4c, D-093). Decisions: D-041, D
 | File | Role |
 |---|---|
 | `cornering_core.[ch]` | Pure logic: input usability, µ_eff, source selection, decision, hysteresis. No `hal/`, no `services/` (CI grep). |
-| `cornering.[ch]` | Glue: `mailbox_take()` → generated E2E check (compile-time length) → generated timeout check every pass → gen unpack → core. Called by `app/safety_app.c` only. |
+| `cornering.[ch]` | Glue: `platform_link_take()` (the link already ran the generated E2E check, with the compile-time length, on every received frame) → generated timeout check every pass → gen unpack → core. Called by `app/safety_app.c` only. |
 
-## Inputs (per super-loop pass, ≤ 5 ms, after `mailbox_step()`)
+## Inputs (per super-loop pass, ≤ 5 ms, after `platform_link_step()`)
 
 | Frame | Usable when | Not usable → |
 |---|---|---|
@@ -34,8 +34,8 @@ received through the M7→M4 mailbox (D-072 item 4c, D-093). Decisions: D-041, D
   about 380 ms after rt-core starts sending (test_cornering), on the safe side of D-101's
   "about 200 ms after the first usable frame". Any break resets the count.
 - NONE is named **"rt-core inputs lost"** (`cornering_status().rt_core_inputs_lost`,
-  `inputs_lost_onsets`): the M4 cannot tell an FDCAN2 bus-off on the M7 from a dead rt-core
-  (ISSUES E-28 (1)), so it is never counted as an rt-core fault, never in 0x082 ERROR_COUNT.
+  `inputs_lost_onsets`): the node cannot tell a dead rt-core from a platform-bus fault or a
+  masquerading sender, so it is never counted as an rt-core fault, never in 0x082 ERROR_COUNT.
 
 ## Decision (D-041, D-100)
 
@@ -45,7 +45,7 @@ received through the M7→M4 mailbox (D-072 item 4c, D-093). Decisions: D-041, D
 - Hysteresis (D-100 item 3, named constants `CORNERING_HYST_U_MARGIN` 0.05 and
   `CORNERING_HYST_HOLD_MS` 100 ms, tuned on HIL): a more severe level at once; RED → YELLOW
   after u < k_red − 0.05, → GREEN after u < k_yellow − 0.05, each continuously for 100 ms on
-  the M4's timebase.
+  the node's timebase.
 - Evaluated only on fresh input (a new 0x020 or 0x022 frame, a 0x022 timeout, or the pass
   that switches to EKF), so the hold timers advance on fresh frames only; between them the
   level is held. A lost source gives UNAVAILABLE at once and resets the hysteresis.
@@ -62,18 +62,17 @@ warning available".
 ## Timing and resources
 
 - Super loop only, never from an ISR; static storage (~100 B RAM), no heap; the first WCET
-  group (D-072 item 3). M4 release: about 1.5 KB text for core + glue, plus `sinf`/`cosf`
+  group (D-072 item 3). Cortex-M4F release: about 1.5 KB text for core + glue, plus `sinf`/`cosf`
   from libm at the final link.
 
 ## Tests
 
 `tests/host/test_cornering_core.c` (boundaries, Q-029, µ rule, selection, hysteresis),
 `tests/host/test_cornering.c` (glue with real gen E2E frames: CRC, repeated counter,
-timeout, INITIAL, heartbeat, µ loss), `tests/host/test_safety_app.c` (end to end through
-the mailbox, first-pass baseline, 32-bit ms wrap). Not covered on the host: the defensive
-output-fault paths of `app/safety_app.c` (pack/protect/offer failure), unreachable through
-the public API; a `-Wl,--wrap` fault-injection build follows before the board PR
-(safety-reviewer MINOR-5).
+timeout, INITIAL, heartbeat, µ loss), `tests/host/test_safety_app.c` (end to end over
+the bus model, first-pass baseline, 32-bit ms wrap). Not covered on the host: the defensive
+output-fault paths of `app/safety_app.c` (pack/protect/send failure) are covered by
+`tests/host/test_safety_app_faults.c` through renamed seams.
 
 ## HIL scenario (proposal, `vehicle-hil-bench/scenarios/`)
 

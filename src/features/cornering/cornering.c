@@ -3,24 +3,11 @@
 #include "platform.h"
 #include "platform_e2e.h"
 #include "platform_limits.h"
-#include "platform_mailbox.h"
-#include "services/mailbox.h"
+#include "services/platform_link.h"
 
 #include <string.h>
 
-_Static_assert(PLATFORM_MAILBOX_SLOT_EKF_LEAN_LENGTH == PLATFORM_EKF_LEAN_LENGTH, "slot length = frame length");
-_Static_assert(PLATFORM_MAILBOX_SLOT_EKF_FRICTION_MASS_LENGTH == PLATFORM_EKF_FRICTION_MASS_LENGTH,
-               "slot length = frame length");
-_Static_assert(PLATFORM_MAILBOX_SLOT_HEARTBEAT_RT_CORE_LENGTH == PLATFORM_HEARTBEAT_RT_CORE_LENGTH,
-               "slot length = frame length");
-_Static_assert(PLATFORM_EKF_LEAN_LENGTH <= MAILBOX_PAYLOAD_BYTES, "frame fits the slot buffer");
-_Static_assert(PLATFORM_EKF_FRICTION_MASS_LENGTH <= MAILBOX_PAYLOAD_BYTES, "frame fits the slot buffer");
-_Static_assert(PLATFORM_HEARTBEAT_RT_CORE_LENGTH <= MAILBOX_PAYLOAD_BYTES, "frame fits the slot buffer");
-
 typedef struct {
-    vehicle_e2e_rx_state_t lean_rx;
-    vehicle_e2e_rx_state_t mu_rx;
-    vehicle_e2e_rx_state_t hb_rx;
     cornering_select_t sel;
     cornering_hyst_t hyst;
     cornering_output_t out;
@@ -35,9 +22,6 @@ static cornering_ctx_t ctx;
 void cornering_init(void)
 {
     (void)memset(&ctx, 0, sizeof ctx);
-    vehicle_e2e_rx_init(&ctx.lean_rx);
-    vehicle_e2e_rx_init(&ctx.mu_rx);
-    vehicle_e2e_rx_init(&ctx.hb_rx);
     cornering_select_init(&ctx.sel);
     cornering_hyst_reset(&ctx.hyst);
     ctx.out.level = CORNERING_LEVEL_UNAVAILABLE;
@@ -51,11 +35,10 @@ void cornering_init(void)
 
 static void take_heartbeat(uint32_t now_ms)
 {
-    uint8_t buf[MAILBOX_PAYLOAD_BYTES];
+    uint8_t buf[PLATFORM_LINK_PAYLOAD_BYTES];
     struct platform_heartbeat_rt_core_t hb;
-    if (mailbox_take((uint8_t)PLATFORM_MAILBOX_SLOT_HEARTBEAT_RT_CORE_INDEX, buf)) {
+    if (platform_link_take(PLATFORM_LINK_RX_HEARTBEAT_RT_CORE, buf, &ctx.status.hb_e2e)) {
         bool ok = false;
-        ctx.status.hb_e2e = platform_heartbeat_rt_core_e2e_check(buf, PLATFORM_HEARTBEAT_RT_CORE_LENGTH, &ctx.hb_rx, now_ms);
         if (vehicle_e2e_is_valid(ctx.status.hb_e2e) &&
             (platform_heartbeat_rt_core_unpack(&hb, buf, PLATFORM_HEARTBEAT_RT_CORE_LENGTH) == 0) &&
             (hb.node_mode == PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE)) {
@@ -65,7 +48,7 @@ static void take_heartbeat(uint32_t now_ms)
         }
         ctx.status.hb_ok = ok;
     }
-    if (platform_heartbeat_rt_core_e2e_check_timeout(&ctx.hb_rx, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
+    if (platform_link_check_timeout(PLATFORM_LINK_RX_HEARTBEAT_RT_CORE, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
         if (ctx.status.hb_ok) {
             ctx.status.hb_timeouts++;
         }
@@ -75,13 +58,11 @@ static void take_heartbeat(uint32_t now_ms)
 
 static bool take_friction(uint32_t now_ms)
 {
-    uint8_t buf[MAILBOX_PAYLOAD_BYTES];
+    uint8_t buf[PLATFORM_LINK_PAYLOAD_BYTES];
     struct platform_ekf_friction_mass_t m;
     bool fresh = false;
-    if (mailbox_take((uint8_t)PLATFORM_MAILBOX_SLOT_EKF_FRICTION_MASS_INDEX, buf)) {
+    if (platform_link_take(PLATFORM_LINK_RX_EKF_FRICTION_MASS, buf, &ctx.status.mu_e2e)) {
         fresh = true;
-        ctx.status.mu_e2e =
-            platform_ekf_friction_mass_e2e_check(buf, PLATFORM_EKF_FRICTION_MASS_LENGTH, &ctx.mu_rx, now_ms);
         if (!vehicle_e2e_is_valid(ctx.status.mu_e2e)) {
             ctx.status.mu_live = false; /* D-101 item 5: frame lost -> min(last valid, default) */
             ctx.status.mu_e2e_rejected++;
@@ -94,7 +75,7 @@ static bool take_friction(uint32_t now_ms)
             ctx.status.mu_value_rejected++;
         }
     }
-    if (platform_ekf_friction_mass_e2e_check_timeout(&ctx.mu_rx, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
+    if (platform_link_check_timeout(PLATFORM_LINK_RX_EKF_FRICTION_MASS, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
         if (ctx.status.mu_live) {
             ctx.status.mu_timeouts++;
             fresh = true; /* mu_eff becomes min(last valid, default): re-evaluate */
@@ -107,14 +88,13 @@ static bool take_friction(uint32_t now_ms)
 /* Returns true if a 0x020 frame was taken; *usable is its result. */
 static bool take_lean(uint32_t now_ms, bool* usable)
 {
-    uint8_t buf[MAILBOX_PAYLOAD_BYTES];
+    uint8_t buf[PLATFORM_LINK_PAYLOAD_BYTES];
     struct platform_ekf_lean_t m;
     float deg = 0.0f;
     bool taken = false;
     bool ok = false;
-    if (mailbox_take((uint8_t)PLATFORM_MAILBOX_SLOT_EKF_LEAN_INDEX, buf)) {
+    if (platform_link_take(PLATFORM_LINK_RX_EKF_LEAN, buf, &ctx.status.lean_e2e)) {
         taken = true;
-        ctx.status.lean_e2e = platform_ekf_lean_e2e_check(buf, PLATFORM_EKF_LEAN_LENGTH, &ctx.lean_rx, now_ms);
         if (vehicle_e2e_is_valid(ctx.status.lean_e2e) &&
             (platform_ekf_lean_unpack(&m, buf, PLATFORM_EKF_LEAN_LENGTH) == 0) &&
             cornering_lean_usable(m.lean_angle_state, m.lean_angle, &deg)) {
@@ -125,7 +105,7 @@ static bool take_lean(uint32_t now_ms, bool* usable)
         }
         ctx.status.lean_live = ok;
     }
-    if (platform_ekf_lean_e2e_check_timeout(&ctx.lean_rx, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
+    if (platform_link_check_timeout(PLATFORM_LINK_RX_EKF_LEAN, now_ms) == VEHICLE_E2E_NO_NEW_DATA) {
         if (ctx.status.lean_live) {
             ctx.status.lean_timeouts++;
         }

@@ -5,7 +5,7 @@
  * Pure Layer 1 cornering logic (no hal/, no services/): input usability, the D-029
  * friction rule, the D-042 item 3 source selection with the D-075 item 6 (4) / D-101
  * item 4 return rule, the division-free D-041 decision and the D-100 item 3 level
- * hysteresis. Host-tested; the glue (cornering.c) feeds it from the mailbox.
+ * hysteresis. Host-tested; the glue (cornering.c) feeds it from the platform-bus link.
  *
  * v1 scope (D-100): lateral only (Q-022 open), no own-IMU estimator (Q-023 (5)/(6) open).
  * The own-IMU source is "not usable" by construction, so whenever rt-core's lean is not
@@ -46,7 +46,7 @@ typedef struct {
 /* D-100 item 3 (provisional, tuned on HIL): a less severe level is taken only after u has
  * stayed below the lower level's threshold minus this margin (absolute u) ... */
 #define CORNERING_HYST_U_MARGIN (0.05f)
-/* ... for this long without a break, on the M4's own timebase (5 frames of 0x020). */
+/* ... for this long without a break, on the node's own timebase (5 frames of 0x020). */
 #define CORNERING_HYST_HOLD_MS (100u)
 /* D-075 item 6 (4), D-101 item 4 (provisional): consecutive usable 0x020 frames, each
  * received while the 0x081 heartbeat is OK and NORMAL, before the source becomes EKF;

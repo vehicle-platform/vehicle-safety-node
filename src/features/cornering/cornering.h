@@ -2,20 +2,21 @@
 #define FEATURES_CORNERING_CORNERING_H
 
 /*
- * Layer 1 cornering glue (D-041, D-042, D-100, D-101): takes the M7->M4 frames 0x081
- * HeartbeatRtCore, 0x022 EkfFrictionMass and 0x020 EkfLean from services/mailbox, runs the
- * generated E2E check on each (compile-time length, INITIAL not usable, D-026) and the
- * generated timeout check every pass, unpacks with gen/ and feeds cornering_core.
+ * Layer 1 cornering glue (D-041, D-042, D-100, D-101): takes the platform-bus frames 0x081
+ * HeartbeatRtCore, 0x022 EkfFrictionMass and 0x020 EkfLean from services/platform_link (D-118;
+ * the link ran the generated E2E check on every received frame: CRC, counter, INITIAL not
+ * usable, D-026), runs the generated timeout check every pass, unpacks with gen/ and feeds
+ * cornering_core.
  *
- * Called from the super loop only (app/safety_app.c), after mailbox_step() of the same
+ * Called from the super loop only (app/safety_app.c), after platform_link_step() of the same
  * pass. The decision is evaluated only on fresh input (a new 0x020 or 0x022 frame, or the
  * pass that switches the source to EKF), so the D-100 hysteresis timers advance on fresh
  * frames only; between them the level is held, and a lost input still goes to UNAVAILABLE
  * at once (architecture-guard MINOR-2).
  *
- * When the M7->M4 frames stop or are not usable the M4 cannot tell an FDCAN2 bus-off on
- * the M7 from a dead rt-core (ISSUES E-28 (1)): the condition is named "rt-core inputs
- * lost", gives UNAVAILABLE (D-100 item 2) and is never counted as a fault of rt-core.
+ * When the rt-core frames stop or are not usable the node cannot tell a dead rt-core from a
+ * platform-bus fault or a masquerading sender: the condition is named "rt-core inputs lost",
+ * gives UNAVAILABLE (D-100 item 2) and is never counted as a fault of rt-core.
  */
 
 #include "features/cornering/cornering_core.h"
@@ -51,7 +52,7 @@ typedef struct {
 /* Boot, before the super loop: UNAVAILABLE / NONE, all receivers unsynced. */
 void cornering_init(void);
 
-/* Once per super-loop pass, after mailbox_step(now_ms). */
+/* Once per super-loop pass, after platform_link_step(now_ms). */
 void cornering_step(uint32_t now_ms);
 
 /* The current decision; the pair is always 0x023-consistent. */

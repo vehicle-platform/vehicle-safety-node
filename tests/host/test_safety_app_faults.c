@@ -1,32 +1,32 @@
 /*
  * Fault injection into the output paths of app/safety_app (ISSUES E-29 (1), safety-reviewer
- * MINOR-5 of safety-node#10): the checked pack, the E2E protect and mailbox_offer() of
+ * MINOR-5 of safety-node#10): the checked pack, the E2E protect and platform_link_send() of
  * 0x023 and 0x082 cannot fail through the public API, so this test builds its own copy of
  * src/app/safety_app.c with those five calls renamed to the fi_* seams below (compile
  * definitions in tests/host/CMakeLists.txt). Each seam calls the real function unless a
  * failure is armed. A link-time seam (-Wl,--wrap) was the first plan; the renamed copy
  * works with every linker, so the test also runs on macOS.
  *
- * Covered (D-101 items 1-2, safety_app.c offer_warning/offer_heartbeat):
+ * Covered (D-101 items 1-2, safety_app.c send_warning/send_heartbeat):
  *   - 0x023 pack failure: the documented all-raw-0 frame (UNAVAILABLE/NONE) still goes out
  *     with a valid E2E; output fault counted;
- *   - 0x023 protect or offer failure: no frame that cycle; output fault counted;
+ *   - 0x023 protect or send failure: no frame that cycle; output fault counted;
  *   - 0x082 pack or protect failure: no 0x082 that cycle and no counter gap (the next one is
- *     OK); offer failure: signed but not offered, so the M7 rejects the next 0x082 as
+ *     OK); send failure: signed but not sent, so the receiver rejects the next 0x082 as
  *     WRONG_SEQUENCE; output fault counted;
  *   - every output fault is an event fault: ERROR_COUNT + 1 and exactly one DEGRADED 0x082
  *     (the next one sent), then NORMAL again.
  * The sink records the E2E status of every frame and asserts it wherever the content is
  * checked. E2E note (generated receiver): WRONG_SEQUENCE does not refresh the receive time,
- * so after one signed-but-lost 0x082 the M7 never accepts the DEGRADED frame, and the next
+ * so after one signed-but-lost 0x082 the receiver never accepts the DEGRADED frame, and the next
  * OK lands exactly on the 300 ms timeout (zero margin; with read jitter it is INITIAL, also
  * not valid). Fail-safe; recorded in ISSUES E-29.
  */
 #include "app/safety_app.h"
 
-#include "m7_model.h"
-#include "services/mailbox.h"
+#include "bus_model.h"
 #include "platform_e2e.h"
+#include "services/platform_link.h"
 
 #include <unity.h>
 
@@ -36,7 +36,7 @@ int fi_warn_pack(uint8_t* dst_p, const struct platform_safety_warning_status_t* 
 int fi_hbs_pack(uint8_t* dst_p, const struct platform_heartbeat_safety_t* src_p, size_t size);
 vehicle_e2e_status_t fi_warn_protect(uint8_t* data, size_t size, vehicle_e2e_tx_state_t* state);
 vehicle_e2e_status_t fi_hbs_protect(uint8_t* data, size_t size, vehicle_e2e_tx_state_t* state);
-bool fi_mailbox_offer(uint8_t slot, const uint8_t* data, uint8_t len);
+bool fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len);
 
 /* The seams must keep the real signatures (the renamed copy of safety_app.c calls them
  * through its own prototypes, in another translation unit): one typed pointer each. */
@@ -48,9 +48,9 @@ static vehicle_e2e_status_t (*const k_chk_warn_protect[2])(uint8_t*, size_t, veh
     platform_safety_warning_status_e2e_protect, fi_warn_protect};
 static vehicle_e2e_status_t (*const k_chk_hbs_protect[2])(uint8_t*, size_t, vehicle_e2e_tx_state_t*) = {
     platform_heartbeat_safety_e2e_protect, fi_hbs_protect};
-static bool (*const k_chk_offer[2])(uint8_t, const uint8_t*, uint8_t) = {mailbox_offer, fi_mailbox_offer};
+static bool (*const k_chk_send[2])(platform_link_tx_t, const uint8_t*, uint8_t) = {platform_link_send, fi_link_send};
 
-typedef enum { FI_WARN_PACK, FI_HBS_PACK, FI_WARN_PROTECT, FI_HBS_PROTECT, FI_WARN_OFFER, FI_HBS_OFFER, FI_COUNT } fi_point_t;
+typedef enum { FI_WARN_PACK, FI_HBS_PACK, FI_WARN_PROTECT, FI_HBS_PROTECT, FI_WARN_SEND, FI_HBS_SEND, FI_COUNT } fi_point_t;
 
 static uint32_t fi_armed[FI_COUNT]; /* calls still to fail */
 static uint32_t fi_hits[FI_COUNT];  /* injected failures */
@@ -98,69 +98,30 @@ vehicle_e2e_status_t fi_hbs_protect(uint8_t* data, size_t size, vehicle_e2e_tx_s
     return platform_heartbeat_safety_e2e_protect(data, size, state);
 }
 
-bool fi_mailbox_offer(uint8_t slot, const uint8_t* data, uint8_t len)
+bool fi_link_send(platform_link_tx_t tx, const uint8_t* data, uint8_t len)
 {
     bool fail = false;
-    if (slot == (uint8_t)PLATFORM_MAILBOX_SLOT_SAFETY_WARNING_STATUS_INDEX) {
-        fail = fi_fail(FI_WARN_OFFER);
-    } else if (slot == (uint8_t)PLATFORM_MAILBOX_SLOT_HEARTBEAT_SAFETY_INDEX) {
-        fail = fi_fail(FI_HBS_OFFER);
+    if (tx == PLATFORM_LINK_TX_SAFETY_WARNING_STATUS) {
+        fail = fi_fail(FI_WARN_SEND);
+    } else if (tx == PLATFORM_LINK_TX_HEARTBEAT_SAFETY) {
+        fail = fi_fail(FI_HBS_SEND);
     } else {
-        /* another slot: never injected */
+        /* another message: never injected */
     }
     if (fail) {
         return false;
     }
-    return mailbox_offer(slot, data, len);
+    return platform_link_send(tx, data, len);
 }
 
-/* ------------------------------------------------------------- the M7 side */
+/* ------------------------------------------------------- the rt-core side of the bus */
 
-typedef struct {
-    mailbox_reader_t reader;
-    vehicle_e2e_rx_state_t rx;
-    uint32_t frames;
-    uint32_t ok;
-    uint32_t initial; /* boot only in these tests */
-    uint32_t wrong_sequence;
-    uint32_t other_bad;
-    vehicle_e2e_status_t last_st;
-    uint8_t last[FB_LEN];
-} m7_sink_t;
-
-static m7_rt_core_t rt;
-static m7_sink_t warn;
-static m7_sink_t hbs;
+static rt_core_t rt;
+static bus_sink_t warn;
+static bus_sink_t hbs;
 static uint32_t now;
 static uint32_t next_pass;
 static uint32_t steady_hb_frames; /* 0x082 frames read by STEADY_MS (the last one: 400) */
-
-static void sink_init(m7_sink_t* s, uint8_t len)
-{
-    (void)memset(s, 0, sizeof *s);
-    mailbox_reader_init(&s->reader, len);
-    vehicle_e2e_rx_init(&s->rx);
-}
-
-static void sink_poll(m7_sink_t* s, uint32_t slot, uint16_t id, uint8_t max_delta, uint32_t timeout)
-{
-    uint8_t d[MAILBOX_PAYLOAD_BYTES];
-    if (m7_read(slot, &s->reader, now, d)) {
-        const vehicle_e2e_status_t st = vehicle_e2e_check(id, max_delta, timeout, d, FB_LEN, &s->rx, now);
-        s->frames++;
-        if (st == VEHICLE_E2E_OK) {
-            s->ok++;
-        } else if (st == VEHICLE_E2E_INITIAL) {
-            s->initial++;
-        } else if (st == VEHICLE_E2E_WRONG_SEQUENCE) {
-            s->wrong_sequence++;
-        } else {
-            s->other_bad++;
-        }
-        s->last_st = st;
-        (void)memcpy(s->last, d, FB_LEN);
-    }
-}
 
 /* The last frame was accepted (OK) and carries this NODE_MODE / ERROR_COUNT. */
 static void expect_hbs_ok(uint32_t mode, uint32_t errors);
@@ -186,17 +147,12 @@ static void run_to(uint32_t t_end)
 {
     while ((uint32_t)(t_end - now) - 1u < 0x80000000u) { /* now before t_end, wrap-safe */
         now++;
-        m7_rt_core_tick(&rt, now);
+        rt_core_tick(&rt, now);
         if ((int32_t)(now - next_pass) >= 0) {
             safety_app_step(now);
             next_pass = now + 2u; /* the D-101 item 2 nominal period */
         }
-        sink_poll(&warn, M7_WARN, PLATFORM_SAFETY_WARNING_STATUS_E2E_DATA_ID,
-                  (uint8_t)PLATFORM_SAFETY_WARNING_STATUS_E2E_MAX_DELTA_COUNTER,
-                  PLATFORM_SAFETY_WARNING_STATUS_E2E_TIMEOUT_MS);
-        sink_poll(&hbs, M7_HBS, PLATFORM_HEARTBEAT_SAFETY_E2E_DATA_ID,
-                  (uint8_t)PLATFORM_HEARTBEAT_SAFETY_E2E_MAX_DELTA_COUNTER,
-                  PLATFORM_HEARTBEAT_SAFETY_E2E_TIMEOUT_MS);
+        bus_drain_tx(&warn, &hbs, now);
     }
 }
 
@@ -206,17 +162,17 @@ static void run_to(uint32_t t_end)
 static void start_steady(void)
 {
     TEST_ASSERT_TRUE((k_chk_warn_pack[1] != NULL) && (k_chk_hbs_pack[1] != NULL) && (k_chk_warn_protect[1] != NULL) &&
-                     (k_chk_hbs_protect[1] != NULL) && (k_chk_offer[1] != NULL));
+                     (k_chk_hbs_protect[1] != NULL) && (k_chk_send[1] != NULL));
     (void)memset(fi_armed, 0, sizeof fi_armed);
     (void)memset(fi_hits, 0, sizeof fi_hits);
-    m7_reset(true);
-    m7_rt_core_init(&rt);
-    rt.lean_raw = m7_lean_raw(5.0f);
-    sink_init(&warn, (uint8_t)PLATFORM_SAFETY_WARNING_STATUS_LENGTH);
-    sink_init(&hbs, (uint8_t)PLATFORM_HEARTBEAT_SAFETY_LENGTH);
+    bus_reset();
+    rt_core_init(&rt);
+    rt.lean_raw = bus_lean_raw(5.0f);
+    bus_sink_init(&warn);
+    bus_sink_init(&hbs);
     now = 0u;
     next_pass = 2u;
-    TEST_ASSERT_TRUE(safety_app_init(&m7_region, 0u));
+    TEST_ASSERT_TRUE(safety_app_init(0u));
     run_to(STEADY_MS);
     expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, 0u);
     steady_hb_frames = hbs.frames;
@@ -227,7 +183,7 @@ static void start_steady(void)
 typedef enum {
     HB_SENT,     /* the fault was on 0x023: the 0x082 of 500 goes out */
     HB_UNSIGNED, /* the 0x082 of 500 failed before signing: nothing, no counter gap */
-    HB_SIGNED    /* the 0x082 of 500 was signed but never offered: a counter gap */
+    HB_SIGNED    /* the 0x082 of 500 was signed but never sent: a counter gap */
 } hb_fate_t;
 
 /* After an output fault in [STEADY_MS, 500]: ERROR_COUNT + 1 and one DEGRADED 0x082 (the
@@ -252,7 +208,7 @@ static void expect_one_degraded_heartbeat(hb_fate_t fate)
             TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, hbs.last_st); /* accepted */
             TEST_ASSERT_EQUAL_UINT32(0u, hbs.wrong_sequence);
         } else {
-            /* rejected: the M7 never accepts this DEGRADED frame (E2E note above) */
+            /* rejected: the receiver never accepts this DEGRADED frame (E2E note above) */
             TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, hbs.last_st);
             TEST_ASSERT_EQUAL_UINT32(1u, hbs.wrong_sequence);
         }
@@ -308,15 +264,15 @@ static void test_warning_protect_failure_sends_nothing_that_cycle(void)
     expect_one_degraded_heartbeat(HB_SENT);
 }
 
-static void test_warning_offer_failure_is_one_counted_gap(void)
+static void test_warning_send_failure_is_one_counted_gap(void)
 {
     start_steady();
     const uint32_t frames = warn.frames;
-    fi_armed[FI_WARN_OFFER] = 1u;
+    fi_armed[FI_WARN_SEND] = 1u;
     run_to(470u);
-    TEST_ASSERT_EQUAL_UINT32(1u, fi_hits[FI_WARN_OFFER]);
+    TEST_ASSERT_EQUAL_UINT32(1u, fi_hits[FI_WARN_SEND]);
     TEST_ASSERT_EQUAL_UINT32(frames, warn.frames);
-    run_to(490u); /* signed but never offered: the 0x023 of 480 is WRONG_SEQUENCE */
+    run_to(490u); /* signed but never sent: the 0x023 of 480 is WRONG_SEQUENCE */
     TEST_ASSERT_EQUAL_UINT32(frames + 1u, warn.frames);
     TEST_ASSERT_EQUAL_UINT32(1u, warn.wrong_sequence);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, warn.last_st);
@@ -343,13 +299,13 @@ static void test_heartbeat_protect_failure_sends_no_heartbeat(void)
     TEST_ASSERT_EQUAL_UINT32(0u, hbs.wrong_sequence);
 }
 
-static void test_heartbeat_offer_failure_is_one_counted_gap(void)
+static void test_heartbeat_send_failure_is_one_counted_gap(void)
 {
     start_steady();
-    fi_armed[FI_HBS_OFFER] = 1u;
+    fi_armed[FI_HBS_SEND] = 1u;
     expect_one_degraded_heartbeat(HB_SIGNED);
-    TEST_ASSERT_EQUAL_UINT32(1u, fi_hits[FI_HBS_OFFER]);
-    TEST_ASSERT_EQUAL_UINT32(1u, hbs.wrong_sequence); /* signed, never offered: the 0x082 of 600 */
+    TEST_ASSERT_EQUAL_UINT32(1u, fi_hits[FI_HBS_SEND]);
+    TEST_ASSERT_EQUAL_UINT32(1u, hbs.wrong_sequence); /* signed, never sent: the 0x082 of 600 */
 }
 
 int main(void)
@@ -357,9 +313,9 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_warning_pack_failure_sends_the_raw_zero_frame);
     RUN_TEST(test_warning_protect_failure_sends_nothing_that_cycle);
-    RUN_TEST(test_warning_offer_failure_is_one_counted_gap);
+    RUN_TEST(test_warning_send_failure_is_one_counted_gap);
     RUN_TEST(test_heartbeat_pack_failure_sends_no_heartbeat);
     RUN_TEST(test_heartbeat_protect_failure_sends_no_heartbeat);
-    RUN_TEST(test_heartbeat_offer_failure_is_one_counted_gap);
+    RUN_TEST(test_heartbeat_send_failure_is_one_counted_gap);
     return UNITY_END();
 }

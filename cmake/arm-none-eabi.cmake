@@ -1,6 +1,6 @@
-# Toolchain file: arm-none-eabi-gcc for the STM32H755 Cortex-M4 core (D-072, D-007).
-# The CM4 of the STM32H745/H755 (D-094): single-precision FPU. The board parts (CubeMX HAL,
-# startup, linker script for flash bank 2 and D2 SRAM) come with the board (red zone).
+# Toolchain file: arm-none-eabi-gcc for the STM32G474RE (Cortex-M4F, 170 MHz, FDCAN; D-118,
+# D-007). Single-precision FPU (fpv4-sp-d16, hard float ABI). The board parts (CubeMX HAL,
+# startup, linker script, NUCLEO-G474RE; fallback G431RB) come with the board (red zone).
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
