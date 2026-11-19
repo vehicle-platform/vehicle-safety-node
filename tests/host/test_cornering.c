@@ -133,16 +133,16 @@ static void test_repeated_counter_drops_at_once(void)
 static void test_heartbeat_not_normal_drops(void)
 {
     to_ekf();
-    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_DEGRADED_CHOICE;
+    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_DEGRADED_CHOICE;
     run_to(398u);
     TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source);
     run_to(400u);
     TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
     TEST_ASSERT_FALSE(cornering_status().hb_ok);
-    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_INIT_CHOICE;
+    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_INIT_CHOICE;
     run_to(800u);
     TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
-    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE;
+    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE;
     run_to(900u + ((CORNERING_RETURN_FRAMES - 1u) * PLATFORM_EKF_LEAN_CYCLE_TIME_MS));
     TEST_ASSERT_EQUAL(CORNERING_SOURCE_EKF, out().source);
 }

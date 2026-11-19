@@ -100,7 +100,7 @@ static inline void rt_core_init(rt_core_t* m)
     m->lean_state = PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE;
     m->mu_state = PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE;
     m->mu_raw = bus_mu_raw(0.5f);
-    m->hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE;
+    m->hb_mode = PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE;
 }
 
 /* Sends whatever is due at now (each stream on its gen/ cycle, phase 0). */

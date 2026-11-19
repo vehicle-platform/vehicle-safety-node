@@ -61,7 +61,7 @@ static void test_all_four_ids_are_accepted_and_checked(void)
         bus_send(BUS_LEAN, f);
         fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
         bus_send(BUS_MU, f);
-        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
         bus_send(BUS_HB, f);
         build_req(f);
         bus_send(BUS_REQ, f);
@@ -247,7 +247,7 @@ static void test_a_safety_fifo_loss_invalidates_the_safety_slots(void)
         bus_send(BUS_LEAN, f);
         fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
         bus_send(BUS_MU, f);
-        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
         bus_send(BUS_HB, f);
         platform_link_step(10u + (k * 20u));
         TEST_ASSERT_EQUAL((k == 0u) ? VEHICLE_E2E_INITIAL : VEHICLE_E2E_OK, take_status(PLATFORM_LINK_RX_EKF_LEAN));
@@ -259,7 +259,7 @@ static void test_a_safety_fifo_loss_invalidates_the_safety_slots(void)
     bus_send(BUS_LEAN, f);
     fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
     bus_send(BUS_MU, f);
-    fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+    fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
     bus_send(BUS_HB, f);
     fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &lean_tx);
     TEST_ASSERT_FALSE(bus_try_send(BUS_LEAN, f));
@@ -343,7 +343,7 @@ static void test_aligned_burst_with_depth_three_loses_nothing(void)
     bus_send(BUS_LEAN, f);
     fb_mu(f, PLATFORM_EKF_FRICTION_MASS_FRICTION_COEFF_STATE_DEFAULT_CHOICE, 50u, &mu_tx);
     bus_send(BUS_MU, f);
-    fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
+    fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &hb_tx);
     bus_send(BUS_HB, f);
     build_req(f);
     bus_send(BUS_REQ, f);

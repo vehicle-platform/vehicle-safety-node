@@ -174,7 +174,7 @@ static void start_steady(void)
     next_pass = 2u;
     TEST_ASSERT_TRUE(safety_app_init(0u));
     run_to(STEADY_MS);
-    expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, 0u);
+    expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, 0u);
     steady_hb_frames = hbs.frames;
     TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
     TEST_ASSERT_EQUAL_UINT32(0u, warn.wrong_sequence + warn.other_bad + hbs.wrong_sequence + hbs.other_bad);
@@ -196,13 +196,13 @@ static void expect_one_degraded_heartbeat(hb_fate_t fate)
     TEST_ASSERT_EQUAL_UINT8(1u, safety_app_status().error_count);
     if (fate == HB_SENT) {
         TEST_ASSERT_EQUAL_UINT32(hb_frames_before + 1u, hbs.frames);
-        expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, 1u);
+        expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, 1u);
         run_to(650u); /* one DEGRADED frame only (D-101 item 1) */
-        expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, 1u);
+        expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, 1u);
     } else {
         TEST_ASSERT_EQUAL_UINT32(hb_frames_before, hbs.frames); /* nothing at 500 */
         run_to(650u); /* the 0x082 of 600 carries the held DEGRADED */
-        TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+        TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
         TEST_ASSERT_EQUAL_UINT32(1u, hbs_errors());
         if (fate == HB_UNSIGNED) {
             TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, hbs.last_st); /* accepted */
@@ -214,7 +214,7 @@ static void expect_one_degraded_heartbeat(hb_fate_t fate)
         }
     }
     run_to(750u); /* the 0x082 of 700; after HB_SIGNED it is OK exactly at the timeout */
-    expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, 1u);
+    expect_hbs_ok(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, 1u);
     TEST_ASSERT_EQUAL_UINT32(0u, warn.other_bad + hbs.other_bad);
     TEST_ASSERT_EQUAL_UINT32(1u, warn.initial); /* the boot frame only: no resync */
     TEST_ASSERT_EQUAL_UINT32(1u, hbs.initial);

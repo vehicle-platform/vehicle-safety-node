@@ -41,7 +41,7 @@ static void take_heartbeat(uint32_t now_ms)
         bool ok = false;
         if (vehicle_e2e_is_valid(ctx.status.hb_e2e) &&
             (platform_heartbeat_rt_core_unpack(&hb, buf, PLATFORM_HEARTBEAT_RT_CORE_LENGTH) == 0) &&
-            (hb.node_mode == PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE)) {
+            (hb.rt_core_node_mode == PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE)) {
             ok = true;
         } else {
             ctx.status.hb_rejected++;

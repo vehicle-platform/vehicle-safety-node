@@ -97,7 +97,7 @@ static inline uint32_t fb_hb_mode_get(const uint8_t* f)
 {
     struct platform_heartbeat_rt_core_t m;
     (void)platform_heartbeat_rt_core_unpack(&m, f, FB_LEN);
-    return m.node_mode;
+    return m.rt_core_node_mode;
 }
 static inline void fb_hb(uint8_t frame[FB_LEN], uint8_t mode, vehicle_e2e_tx_state_t* tx)
 {
@@ -148,21 +148,21 @@ static inline void fb_hbs_mode_pack(uint8_t* f, uint32_t raw)
 {
     struct platform_heartbeat_safety_t m;
     (void)memset(&m, 0, sizeof m);
-    m.node_mode = (uint8_t)raw;
+    m.safety_node_mode = (uint8_t)raw;
     (void)platform_heartbeat_safety_pack(f, &m, FB_LEN);
 }
 static inline void fb_hbs_errors_pack(uint8_t* f, uint32_t raw)
 {
     struct platform_heartbeat_safety_t m;
     (void)memset(&m, 0, sizeof m);
-    m.error_count = (uint8_t)raw;
+    m.safety_error_count = (uint8_t)raw;
     (void)platform_heartbeat_safety_pack(f, &m, FB_LEN);
 }
 static inline void fb_hbs_uptime_pack(uint8_t* f, uint32_t raw)
 {
     struct platform_heartbeat_safety_t m;
     (void)memset(&m, 0, sizeof m);
-    m.uptime = (uint16_t)raw;
+    m.safety_uptime = (uint16_t)raw;
     (void)platform_heartbeat_safety_pack(f, &m, FB_LEN);
 }
 

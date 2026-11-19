@@ -127,9 +127,9 @@ static void send_heartbeat(void)
     bool bus_refused = false;
 
     (void)memset(&msg, 0, sizeof msg);
-    msg.node_mode = node_health_mode(&app.health, out.source == CORNERING_SOURCE_EKF);
-    msg.error_count = node_health_error_count(&app.health);
-    msg.uptime = node_health_uptime(&app.health);
+    msg.safety_node_mode = node_health_mode(&app.health, out.source == CORNERING_SOURCE_EKF);
+    msg.safety_error_count = node_health_error_count(&app.health);
+    msg.safety_uptime = node_health_uptime(&app.health);
     /* A failed pack or protect sends nothing (rt-core sees no frame this cycle and, after
      * a single failure, no counter gap); a refused send leaves a counter gap. A bus-caused
      * refusal is not an own fault (MINOR-1) and the DEGRADED window stays open (the frame
@@ -141,7 +141,7 @@ static void send_heartbeat(void)
             ok = true;
             node_health_frame_sent(&app.health);
             app.status.hb_sent++;
-            app.status.last_node_mode = msg.node_mode;
+            app.status.last_node_mode = msg.safety_node_mode;
         } else if (r == PLATFORM_LINK_SEND_BUS_REFUSED) {
             bus_refused = true;
             app.status.hb_bus_refused++;
