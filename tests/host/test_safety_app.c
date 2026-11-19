@@ -143,7 +143,7 @@ static void test_boot_init_degraded_then_normal(void)
     start();
     run_to(50u);
     TEST_ASSERT_TRUE(first_mode_seen);
-    TEST_ASSERT_EQUAL_UINT8(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_INIT_CHOICE, first_mode); /* architecture-guard MINOR-4 */
+    TEST_ASSERT_EQUAL_UINT8(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_INIT_CHOICE, first_mode); /* architecture-guard MINOR-4 */
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_UNAVAILABLE_CHOICE, warn_level());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_NONE_CHOICE, warn_source());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_BSM_LEFT_UNAVAILABLE_CHOICE,
@@ -153,11 +153,11 @@ static void test_boot_init_degraded_then_normal(void)
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_IMMOBILIZER_STATE_UNKNOWN_CHOICE,
                              fb_tx_get(warn.last, fb_warn_immobilizer_pack, 8u));
     run_to(150u);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
     run_to(450u); /* EKF from 380 (D-101 item 4), the 0x082 built at 400 */
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_GREEN_CHOICE, warn_level());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
 }
 
@@ -190,10 +190,10 @@ static void test_pass_gap_is_an_own_fault(void)
     TEST_ASSERT_EQUAL_UINT32(1u, safety_app_status().pass_gap_faults);
     TEST_ASSERT_EQUAL_UINT8(1u, safety_app_status().error_count);
     run_to(650u); /* the 0x082 built at 600 carries it */
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(1u, hbs_errors());
     run_to(750u); /* one frame only (D-101 item 1) */
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(1u, hbs_errors());
 }
 
@@ -201,7 +201,7 @@ static void test_rt_core_inputs_lost_is_not_an_own_fault(void)
 {
     start();
     run_to(500u);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_FALSE(safety_app_status().rt_core_inputs_lost);
     rt.lean_on = false; /* a platform-bus fault looks the same (D-118) */
     rt.mu_on = false;
@@ -209,7 +209,7 @@ static void test_rt_core_inputs_lost_is_not_an_own_fault(void)
     run_to(1050u);
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_UNAVAILABLE_CHOICE, warn_level());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_NONE_CHOICE, warn_source());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
     TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
     TEST_ASSERT_TRUE(safety_app_status().rt_core_inputs_lost);
@@ -236,7 +236,7 @@ static void test_runs_across_the_ms_wrap(void)
     TEST_ASSERT_EQUAL_UINT32(0u, warn.bad);
     TEST_ASSERT_EQUAL_UINT32(0u, hbs.bad);
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(1u, fb_tx_get(hbs.last, fb_hbs_uptime_pack, 16u));
 }
 
@@ -265,7 +265,7 @@ static void test_boot_node_first_then_rt_core_appears(void)
     TEST_ASSERT_TRUE(warn.frames > 20u);
     TEST_ASSERT_TRUE(hbs.frames > 3u);
     TEST_ASSERT_EQUAL_UINT32(0u, warn.bad);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_UNAVAILABLE_CHOICE, warn_level());
     rt.lean_on = true;
     rt.mu_on = true;
@@ -278,7 +278,7 @@ static void test_boot_node_first_then_rt_core_appears(void)
     TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
     TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
 }
 
 /* MINOR-1: a TX refused for a bus reason (the TX buffers are full) is counted in the link
@@ -317,7 +317,7 @@ static void test_five_seconds_of_bus_off_leaves_error_count_unchanged(void)
 {
     start();
     run_to(1000u);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     can_host_set_bus_off(true);
     run_to(6000u);
     TEST_ASSERT_TRUE(safety_app_status().link_tx_refused > 200u);
@@ -330,7 +330,7 @@ static void test_five_seconds_of_bus_off_leaves_error_count_unchanged(void)
     run_to(6300u);
     TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
     TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
 }
 
 /* A refused 0x082 (it carries DEGRADED after a pass gap) is a bus refusal: no own fault of its
@@ -355,7 +355,7 @@ static void test_refused_heartbeat_is_a_visible_gap(void)
     run_to(750u);
     TEST_ASSERT_EQUAL_UINT32(hb_frames + 1u, hbs.frames);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_SEQUENCE, hbs.last_st);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode()); /* the window stayed open */
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode()); /* the window stayed open */
     run_to(850u);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, hbs.last_st);
 }
@@ -370,7 +370,7 @@ static void test_masquerade_on_0x020_is_never_used_and_degrades(void)
 {
     start();
     run_to(500u);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
     masq_on = true;
     run_to(1200u);
@@ -378,7 +378,7 @@ static void test_masquerade_on_0x020_is_never_used_and_degrades(void)
     TEST_ASSERT_EQUAL_UINT32(0u, masq_pass_ekf); /* not even in the pass of the first fake frame */
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_NONE_CHOICE, warn_source());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_UNAVAILABLE_CHOICE, warn_level());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
     TEST_ASSERT_TRUE(safety_app_status().rt_core_inputs_lost);
     TEST_ASSERT_TRUE(platform_link_health().rx[PLATFORM_LINK_RX_EKF_LEAN].e2e_rejected > 10u);
@@ -403,7 +403,7 @@ static void test_safety_request_never_influences_the_decision(void)
         run_to(450u);
         TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
         TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_GREEN_CHOICE, warn_level());
-        TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+        TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
         TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
         TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
         TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_IMMOBILIZER_STATE_UNKNOWN_CHOICE,
@@ -422,7 +422,7 @@ static void test_safety_request_flood_keeps_the_source_ekf(void)
     run_to(1500u);
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_SOURCE_EKF_CHOICE, warn_source());
     TEST_ASSERT_EQUAL_UINT32(PLATFORM_SAFETY_WARNING_STATUS_CORNERING_LEVEL_GREEN_CHOICE, warn_level());
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
     TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
     TEST_ASSERT_TRUE(platform_link_health().rx_overflow[1] > 1000u); /* the QM FIFO overflowed, counted */
@@ -436,7 +436,7 @@ static void test_no_safety_request_ever_changes_nothing(void)
     start();
     run_to(1500u);
     TEST_ASSERT_FALSE(platform_link_health().rx[PLATFORM_LINK_RX_SAFETY_REQUEST].seen);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_NORMAL_CHOICE, hbs_mode());
     TEST_ASSERT_EQUAL_UINT32(0u, hbs_errors());
     TEST_ASSERT_EQUAL_UINT8(0u, safety_app_status().error_count);
     TEST_ASSERT_EQUAL_UINT32(0u, safety_app_status().output_faults);
@@ -453,14 +453,14 @@ static void test_fake_normal_heartbeat_never_enables_ekf(void)
     vehicle_e2e_tx_state_t fake;
     uint32_t ekf_passes = 0u;
     start();
-    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_INIT_CHOICE;
+    rt.hb_mode = PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_INIT_CHOICE;
     vehicle_e2e_tx_init(&fake);
     fake.counter = 5u;
     while (now < 2000u) {
         run_to(now + 1u);
         if ((now % PLATFORM_HEARTBEAT_RT_CORE_CYCLE_TIME_MS) == 0u) {
             uint8_t f[FB_LEN];
-            fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_NODE_MODE_NORMAL_CHOICE, &fake);
+            fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &fake);
             (void)bus_try_send(BUS_HB, f);
         }
         if (cornering_output().source == CORNERING_SOURCE_EKF) {
@@ -468,7 +468,7 @@ static void test_fake_normal_heartbeat_never_enables_ekf(void)
         }
     }
     TEST_ASSERT_EQUAL_UINT32(0u, ekf_passes);
-    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_HEARTBEAT_SAFETY_SAFETY_NODE_MODE_DEGRADED_CHOICE, hbs_mode());
 }
 
 /* MINOR-3: a fake 0x022 (ESTIMATED, mu 1.2, valid CRC, its own counter) next to the real
