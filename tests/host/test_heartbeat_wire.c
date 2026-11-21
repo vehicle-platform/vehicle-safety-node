@@ -26,7 +26,7 @@ typedef struct {
     uint8_t bytes[HB_LEN];
 } hb_vector_t;
 
-/* From vehicle-defs heartbeat_vectors.json (untagged v0.30.0 content), resync on repin. Message HeartbeatRtCore
+/* From vehicle-defs heartbeat_vectors.json (v0.30.0), resync on repin. Message HeartbeatRtCore
  * (0x081, Data ID 0x1081). Built by the defs generator from cantools and the Python reference
  * E2E, never from the C pack; the bytes are byte 0 (CRC-8) first. Order as in the file. */
 static const hb_vector_t VECTORS[] = {

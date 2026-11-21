@@ -126,8 +126,10 @@ static void handle_frame(const hal_can_frame_t* f, hal_can_rx_class_t from, uint
         /* Never passed to the E2E check: it would read bytes that are not there. The consumer
          * sees a failure, so a broken or foreign sender on a safety ID is never usable. */
         lk.health.rx[i].bad_dlc++;
+        /* The same verdict the generated wrapper gives for a size other than the DLC (defs
+         * v0.30.0, E-5): WRONG_LENGTH, invalid for every consumer (vehicle_e2e_is_valid()). */
         note_frame(i, f->data, (uint8_t)((f->dlc < k_rx[i].length) ? f->dlc : k_rx[i].length),
-                   VEHICLE_E2E_BAD_ARGUMENT, now_ms);
+                   VEHICLE_E2E_WRONG_LENGTH, now_ms);
     } else {
         vehicle_e2e_status_t st = k_rx[i].check(f->data, k_rx[i].length, &lk.slot[i].e2e, now_ms);
         lk.health.rx[i].frames++;
@@ -143,7 +145,9 @@ static void handle_frame(const hal_can_frame_t* f, hal_can_rx_class_t from, uint
             } else if (st == VEHICLE_E2E_WRONG_CRC) {
                 h->e2e_wrong_crc++;
             } else {
-                /* NO_NEW_DATA / BAD_ARGUMENT from the check: counted in the sum only */
+                /* NO_NEW_DATA / BAD_ARGUMENT / WRONG_LENGTH from the check: counted in the sum
+                 * only (WRONG_LENGTH cannot occur here, the DLC guard above passes the exact
+                 * length, and it is invalid like every status that is not OK / OK_SOME_LOST) */
             }
         }
         note_frame(i, f->data, k_rx[i].length, st, now_ms);
