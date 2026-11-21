@@ -14,9 +14,10 @@ jobs:
     timeout-minutes: 15
     steps:
       # vehicle-defs is public (D-033), so the submodule needs no extra secret.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       # D-003/D-036: consumers pin defs to a release tag, never a branch commit.
       - name: Defs pin must be a release tag
@@ -38,7 +39,7 @@ jobs:
       # 2.22 reports). Same build and cache key as vehicle-rt-core and vehicle-defs.
       - name: Restore cppcheck 2.22.0
         id: cppcheck
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/cppcheck
           key: cppcheck-2.22.0-ubuntu-24.04
@@ -54,7 +55,7 @@ jobs:
 
       - name: Save cppcheck 2.22.0
         if: steps.cppcheck.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/cppcheck
           key: cppcheck-2.22.0-ubuntu-24.04
