@@ -21,14 +21,15 @@
  * count during a pass invalidates the pending verdict of the three safety slots for that take
  * (D-026: a seen loss invalidates the cycle); the consumers fall back and return per the
  * existing rules. A frame that arrives through the wrong class (e.g. 0x020 via the QM FIFO)
- * is a filter/configuration fault and is rejected like a wrong DLC (BAD_ARGUMENT). All counters are diagnostics,
+ * is a filter/configuration fault and is rejected like a wrong DLC (BAD_ARGUMENT, not usable). All counters are diagnostics,
  * never decision inputs (the decision sees E2E verdicts and timeouts only).
  *
  * What the link does with a received frame (the E2E profile of D-005, e2e-profile.md, as it
  * ran on the mailbox before):
  *   - DLC must equal the generated length. A frame with a known ID and another DLC is not
- *     passed to the E2E check; it reaches the consumer as VEHICLE_E2E_BAD_ARGUMENT, so it is
- *     never usable (fail safe: a foreign or broken sender on a safety ID).
+ *     passed to the E2E check; it reaches the consumer as VEHICLE_E2E_WRONG_LENGTH (the
+ *     generated wrapper's verdict since defs v0.30.0; RTR/FD frames and a wrong receive class
+ *     stay BAD_ARGUMENT), so it is never usable (fail safe: a foreign or broken sender on a safety ID).
  *   - the generated per-message E2E check (CRC with the Data ID, counter, timeout) runs on
  *     EVERY frame, not only the newest one per pass. Two senders of one ID therefore break
  *     the counter sequence (WRONG_SEQUENCE / REPEATED / WRONG_CRC) even when both land

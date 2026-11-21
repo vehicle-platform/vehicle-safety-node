@@ -163,10 +163,11 @@ static void test_wrong_dlc_is_never_valid_and_leaves_the_e2e_state(void)
     fb_lean(f, PLATFORM_EKF_LEAN_LEAN_ANGLE_STATE_ESTIMATED_CHOICE, 100, &tx);
     bus_send_dlc(BUS_LEAN, f, 7u);
     platform_link_step(40u);
-    TEST_ASSERT_EQUAL(VEHICLE_E2E_BAD_ARGUMENT, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_LENGTH, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+    TEST_ASSERT_FALSE(vehicle_e2e_is_valid(VEHICLE_E2E_WRONG_LENGTH));
     bus_send_dlc(BUS_LEAN, f, 0u);
     platform_link_step(42u);
-    TEST_ASSERT_EQUAL(VEHICLE_E2E_BAD_ARGUMENT, take_status(PLATFORM_LINK_RX_EKF_LEAN));
+    TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_LENGTH, take_status(PLATFORM_LINK_RX_EKF_LEAN));
     bus_send_dlc(BUS_LEAN, f, 8u); /* the genuine frame arrives: the E2E counter state was not touched */
     platform_link_step(44u);
     TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, take_status(PLATFORM_LINK_RX_EKF_LEAN));
