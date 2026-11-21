@@ -26,7 +26,7 @@ typedef struct {
     uint8_t bytes[HB_LEN];
 } hb_vector_t;
 
-/* From vehicle-defs heartbeat_vectors.json (v0.30.0), resync on repin. Message HeartbeatRtCore
+/* From vehicle-defs heartbeat_vectors.json (untagged v0.30.0 content), resync on repin. Message HeartbeatRtCore
  * (0x081, Data ID 0x1081). Built by the defs generator from cantools and the Python reference
  * E2E, never from the C pack; the bytes are byte 0 (CRC-8) first. Order as in the file. */
 static const hb_vector_t VECTORS[] = {
@@ -60,6 +60,40 @@ static const hb_vector_t VECTORS[] = {
     {15u, 0u, 0u, 0u, {0xD9u, 0xF0u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}},
 };
 #define VECTOR_COUNT (sizeof VECTORS / sizeof VECTORS[0])
+
+/* HeartbeatSafety (0x082, Data ID 0x1082) frames from the same file, same provenance: the
+ * safety node's own heartbeat arriving as a 0x081 is a masquerade and must fail the CRC. */
+static const uint8_t SAFETY_HB_VECTORS[][HB_LEN] = {
+    {0xDFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x83u, 0x0Fu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x96u, 0x00u, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xCAu, 0x0Fu, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xD6u, 0x00u, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x8Au, 0x0Fu, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x9Fu, 0x00u, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xC3u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0x66u, 0x10u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x3Au, 0x1Fu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x2Fu, 0x10u, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0x73u, 0x1Fu, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0x6Fu, 0x10u, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x33u, 0x1Fu, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x26u, 0x10u, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0x7Au, 0x1Fu, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xB0u, 0x20u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0xECu, 0x2Fu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0xF9u, 0x20u, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xA5u, 0x2Fu, 0x00u, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xB9u, 0x20u, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0xE5u, 0x2Fu, 0xFFu, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0xF0u, 0x20u, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0xACu, 0x2Fu, 0xFFu, 0xFFu, 0xFFu, 0x00u, 0x00u, 0x00u},
+    {0x09u, 0x30u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x01u, 0x40u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0xB8u, 0x50u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+    {0x76u, 0xF0u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
+};
+#define SAFETY_HB_COUNT (sizeof SAFETY_HB_VECTORS / sizeof SAFETY_HB_VECTORS[0])
 
 #define PASS_MS 2u
 #define MODE_NORMAL (PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE)
@@ -122,7 +156,6 @@ static void test_counter_wrap_pair_is_ok_and_decodes(void)
                 uint8_t payload[PLATFORM_LINK_PAYLOAD_BYTES];
                 (void)receive(VECTORS[i].bytes, payload);
                 TEST_ASSERT_EQUAL(VEHICLE_E2E_OK, receive(VECTORS[j].bytes, payload));
-                TEST_ASSERT_TRUE(vehicle_e2e_is_valid(VEHICLE_E2E_OK));
                 check_fields(&VECTORS[j], payload);
                 pairs++;
                 setUp();
@@ -132,11 +165,11 @@ static void test_counter_wrap_pair_is_ok_and_decodes(void)
     TEST_ASSERT_GREATER_THAN_UINT32(0u, pairs);
 }
 
-/* Any single flipped bit of any vector (CRC, counter, payload) is WRONG_CRC, also the high
- * nibble of byte 1 that carries NODE_MODE bit 0 .. 3 and a Data ID of another heartbeat. */
+/* Any single flipped bit of any vector (CRC, counter, payload) is WRONG_CRC, including the
+ * NODE_MODE nibble in byte 1. All vectors. */
 static void test_single_bit_corruption_is_wrong_crc(void)
 {
-    for (uint32_t i = 0u; i < VECTOR_COUNT; i += 5u) {
+    for (uint32_t i = 0u; i < VECTOR_COUNT; i++) {
         for (uint32_t bit = 0u; bit < (HB_LEN * 8u); bit++) {
             uint8_t bad[HB_LEN];
             uint8_t payload[PLATFORM_LINK_PAYLOAD_BYTES];
@@ -145,6 +178,16 @@ static void test_single_bit_corruption_is_wrong_crc(void)
             TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_CRC, receive(bad, payload));
             setUp();
         }
+    }
+}
+
+/* A 0x082 frame injected as 0x081: same layout, other Data ID, so the CRC fails. */
+static void test_heartbeat_safety_frames_as_0x081_are_wrong_crc(void)
+{
+    for (uint32_t i = 0u; i < SAFETY_HB_COUNT; i++) {
+        uint8_t payload[PLATFORM_LINK_PAYLOAD_BYTES];
+        TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_CRC, receive(SAFETY_HB_VECTORS[i], payload));
+        setUp();
     }
 }
 
@@ -199,16 +242,18 @@ static void test_degraded_reference(void)
 {
     assert_degraded_like(PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_DEGRADED_CHOICE);
 }
-static void test_safe_state_acts_like_degraded(void) { assert_degraded_like(3u); }
-static void test_bootloader_acts_like_degraded(void) { assert_degraded_like(4u); }
-static void test_diagnostic_acts_like_degraded(void) { assert_degraded_like(5u); }
+static void test_safe_state_acts_like_degraded(void) { assert_degraded_like(PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_SAFE_STATE_CHOICE); }
+static void test_bootloader_acts_like_degraded(void) { assert_degraded_like(PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_BOOTLOADER_CHOICE); }
+static void test_diagnostic_acts_like_degraded(void) { assert_degraded_like(PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_DIAGNOSTIC_CHOICE); }
 static void test_undefined_mode_15_acts_like_degraded(void) { assert_degraded_like(15u); }
 
 /* From a running EKF source, a switch to each non-NORMAL mode drops it on the next frame and
  * the source never comes back while the mode stays. */
 static void test_each_non_normal_mode_drops_a_running_ekf(void)
 {
-    static const uint8_t modes[] = {3u, 4u, 5u, 15u};
+    static const uint8_t modes[] = {PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_SAFE_STATE_CHOICE,
+                                    PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_BOOTLOADER_CHOICE,
+                                    PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_DIAGNOSTIC_CHOICE, 15u};
     for (uint32_t i = 0u; i < sizeof modes; i++) {
         cornering_start(MODE_NORMAL);
         run_to(380u);
@@ -230,6 +275,7 @@ int main(void)
     RUN_TEST(test_every_vector_passes_crc_and_decodes);
     RUN_TEST(test_counter_wrap_pair_is_ok_and_decodes);
     RUN_TEST(test_single_bit_corruption_is_wrong_crc);
+    RUN_TEST(test_heartbeat_safety_frames_as_0x081_are_wrong_crc);
     RUN_TEST(test_degraded_reference);
     RUN_TEST(test_safe_state_acts_like_degraded);
     RUN_TEST(test_bootloader_acts_like_degraded);
