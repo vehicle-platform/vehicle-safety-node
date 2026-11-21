@@ -22,6 +22,7 @@ vehicle_host_test(test_indicator vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_cornering vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_safety_app vehicle_safety_fw vehicle_safety_hal_host)
 vehicle_host_test(test_platform_link vehicle_safety_fw vehicle_safety_hal_host)
+vehicle_host_test(test_heartbeat_wire vehicle_safety_fw vehicle_safety_hal_host)
 
 # Fault injection into the safety_app output paths (ISSUES E-29 (1)): the test builds its
 # own copy of app/safety_app.c with the checked pack, the E2E protect and platform_link_send()
