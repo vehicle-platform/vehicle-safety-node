@@ -115,6 +115,49 @@ static void test_bad_crc_drops_at_once(void)
     TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
 }
 
+/* defs v0.30.0 (E-5): a wrong DLC reaches cornering as WRONG_LENGTH, never usable. A stream of
+ * wrong-DLC 0x020 frames in place of the real ones drops the source at once and the level never
+ * reads GREEN again (UNAVAILABLE: the D-042 fallback, the own-IMU path is outside this glue). */
+static void test_wrong_dlc_0x020_drops_at_once_and_is_never_green(void)
+{
+    const uint8_t dlcs[2] = {7u, 0u};
+    uint8_t f[FB_LEN];
+    to_ekf();
+    rt.lean_on = false;
+    for (uint32_t i = 0u; i < 20u; i++) {
+        fb_lean(f, rt.lean_state, rt.lean_raw, &rt.lean_tx);
+        bus_send_dlc(BUS_LEAN, f, dlcs[i % 2u]);
+        run_to(now + PASS_MS);
+        TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_LENGTH, cornering_status().lean_e2e);
+        TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
+        TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
+        TEST_ASSERT_NOT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+        run_to(now + 18u);
+        TEST_ASSERT_NOT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+    }
+    TEST_ASSERT_TRUE(cornering_status().rt_core_inputs_lost);
+}
+
+/* The same for 0x081: wrong-DLC heartbeats are WRONG_LENGTH, hb_ok clears, the source drops. */
+static void test_wrong_dlc_0x081_drops_the_source_and_is_never_green(void)
+{
+    uint8_t f[FB_LEN];
+    to_ekf();
+    rt.hb_on = false;
+    for (uint32_t i = 0u; i < 12u; i++) {
+        fb_hb(f, PLATFORM_HEARTBEAT_RT_CORE_RT_CORE_NODE_MODE_NORMAL_CHOICE, &rt.hb_tx);
+        bus_send_dlc(BUS_HB, f, (i % 2u == 0u) ? 7u : 0u);
+        run_to(now + PASS_MS);
+        TEST_ASSERT_EQUAL(VEHICLE_E2E_WRONG_LENGTH, cornering_status().hb_e2e);
+        TEST_ASSERT_FALSE(cornering_status().hb_ok);
+        TEST_ASSERT_EQUAL(CORNERING_SOURCE_NONE, out().source);
+        TEST_ASSERT_NOT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+        run_to(now + 98u);
+        TEST_ASSERT_NOT_EQUAL(CORNERING_LEVEL_GREEN, out().level);
+    }
+    TEST_ASSERT_EQUAL(CORNERING_LEVEL_UNAVAILABLE, out().level);
+}
+
 static void test_repeated_counter_drops_at_once(void)
 {
     uint8_t f[FB_LEN];
@@ -453,6 +496,8 @@ int main(void)
     RUN_TEST(test_boot_is_unavailable_until_ten_usable_frames);
     RUN_TEST(test_lean_timeout_is_unavailable_and_named_inputs_lost);
     RUN_TEST(test_bad_crc_drops_at_once);
+    RUN_TEST(test_wrong_dlc_0x020_drops_at_once_and_is_never_green);
+    RUN_TEST(test_wrong_dlc_0x081_drops_the_source_and_is_never_green);
     RUN_TEST(test_repeated_counter_drops_at_once);
     RUN_TEST(test_heartbeat_not_normal_drops);
     RUN_TEST(test_heartbeat_timeout_drops);
