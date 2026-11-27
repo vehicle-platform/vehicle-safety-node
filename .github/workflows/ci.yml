@@ -168,7 +168,7 @@ jobs:
           for id in 10.8 15.6 17.7; do
             echo "$out" | grep -qx "misra-c2012-$id" || { echo "::error::the MISRA addon did not report $id on misra/canary.c"; exit 1; }
           done
-          if grep -rn 'cppcheck-suppress' src | grep -v 'DEV-[0-9]'; then
+          if grep -rn 'cppcheck-suppress' src cubemx/User | grep -v 'DEV-[0-9]'; then
             echo "::error::inline cppcheck suppressions must name a deviation (DEV-xxx) from misra/README.md"
             exit 1
           fi
@@ -216,7 +216,8 @@ jobs:
 
       # T77 / invariant 5 + fault path: no heap symbol in the images (the generated sysmem.c is
       # replaced by an always-failing _sbrk), a canary proving the gate fails on a malloc ELF, and
-      # every fault handler reloads MSP first and uses no stack. Debug and Release.
+      # every fault handler reloads MSP first and uses no stack, and .noinit is NOBITS between _ebss
+      # and _sstack. Debug and Release.
       - name: Image gates (heap, fault handlers; Debug and Release)
         run: |
           printf '#include <stdlib.h>\nint main(void){void *p = malloc(8); free(p); return 0;}\n' > "$RUNNER_TEMP/canary.c"
@@ -228,6 +229,7 @@ jobs:
           for cfg in Debug Release; do
             python3 tools/check_image_heap.py --nm arm-none-eabi-nm --forbid-freertos-heap cubemx/build/$cfg/safety-node.elf
             python3 tools/check_fault_handlers.py --objdump arm-none-eabi-objdump cubemx/build/$cfg/safety-node.elf
+            python3 tools/check_noinit.py --nm arm-none-eabi-nm --readelf arm-none-eabi-readelf cubemx/build/$cfg/safety-node.elf
           done
 
       - name: Install Renode ${{ env.RENODE_VERSION }}

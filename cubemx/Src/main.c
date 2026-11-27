@@ -89,7 +89,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  /* First thing in main: read and clear RCC->CSR (before HAL/clock init), count IWDG resets. */
+  /* First thing in main: read and clear RCC->CSR (before HAL/clock init), count abnormal resets. */
   boot_reset_cause_capture();
   /* USER CODE END 1 */
 
@@ -127,11 +127,10 @@ int main(void)
   /* TODO(T13): the FDCAN port starts the controller here. Off in this image (no frame is
    * exchanged, and Renode's M_CAN model does not store NBTP, so the read-back would fail).
    * boot_fdcan_start() checks the run-time kernel clock and the NBTP read-back with
-   * can_timing_nbtp_ok() and goes to the safe state instead of starting on a mismatch. */
-  if (boot_fdcan_start(&hfdcan1, BOOT_FDCAN1_EXPECTED_BPS) != HAL_OK)
-  {
-    Error_Handler();
-  }
+   * can_timing_nbtp_ok(); on a mismatch it leaves the controller stopped and sets
+   * boot_can_fault() (no reset: the rt-core inputs stay invalid and the D-042 own-IMU
+   * fallback and the blind spot keep running). */
+  (void)boot_fdcan_start(&hfdcan1, BOOT_FDCAN1_EXPECTED_BPS);
 #endif
   /* USER CODE END 2 */
 

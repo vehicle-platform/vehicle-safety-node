@@ -13,6 +13,7 @@ _Static_assert(RESET_CAUSE_CSR_IWDGRSTF == RCC_CSR_IWDGRSTF_Msk, "IWDGRSTF");
 _Static_assert(RESET_CAUSE_CSR_WWDGRSTF == RCC_CSR_WWDGRSTF_Msk, "WWDGRSTF");
 _Static_assert(RESET_CAUSE_CSR_LPWRRSTF == RCC_CSR_LPWRRSTF_Msk, "LPWRRSTF");
 _Static_assert(HW_CONFIG_OPTR_BOR_LEV_POS == FLASH_OPTR_BOR_LEV_Pos, "BOR_LEV pos");
+// cppcheck-suppress misra-c2012-12.2 ; DEV-006: constant mask << position inside _Static_assert, operands in range
 _Static_assert((HW_CONFIG_OPTR_BOR_LEV_MASK << HW_CONFIG_OPTR_BOR_LEV_POS) == FLASH_OPTR_BOR_LEV_Msk, "BOR_LEV mask");
 _Static_assert(HW_CONFIG_OPTR_IWDG_SW_MASK == FLASH_OPTR_IWDG_SW_Msk, "IWDG_SW");
 _Static_assert(HW_CONFIG_OPTR_NSWBOOT0_MASK == FLASH_OPTR_nSWBOOT0_Msk, "nSWBOOT0");
@@ -21,17 +22,21 @@ _Static_assert(CAN_TIMING_NBTP_NSJW_POS == FDCAN_NBTP_NSJW_Pos, "NSJW pos");
 _Static_assert(CAN_TIMING_NBTP_NBRP_POS == FDCAN_NBTP_NBRP_Pos, "NBRP pos");
 _Static_assert(CAN_TIMING_NBTP_NTSEG1_POS == FDCAN_NBTP_NTSEG1_Pos, "NTSEG1 pos");
 _Static_assert(CAN_TIMING_NBTP_NTSEG2_POS == FDCAN_NBTP_NTSEG2_Pos, "NTSEG2 pos");
+// cppcheck-suppress-begin misra-c2012-12.2 ; DEV-006: constant mask << position inside _Static_assert, operands in range
 _Static_assert((CAN_TIMING_NBTP_NSJW_MASK << CAN_TIMING_NBTP_NSJW_POS) == FDCAN_NBTP_NSJW_Msk, "NSJW mask");
 _Static_assert((CAN_TIMING_NBTP_NBRP_MASK << CAN_TIMING_NBTP_NBRP_POS) == FDCAN_NBTP_NBRP_Msk, "NBRP mask");
 _Static_assert((CAN_TIMING_NBTP_NTSEG1_MASK << CAN_TIMING_NBTP_NTSEG1_POS) == FDCAN_NBTP_NTSEG1_Msk, "NTSEG1 mask");
+// cppcheck-suppress-end misra-c2012-12.2 ; DEV-006
 _Static_assert((CAN_TIMING_NBTP_NTSEG2_MASK << CAN_TIMING_NBTP_NTSEG2_POS) == FDCAN_NBTP_NTSEG2_Msk, "NTSEG2 mask");
 
 /*
- * IWDG reset counter: .noinit RAM, not cleared by the startup (which zeroes only .bss). The
- * section name is declared NOBITS ("%nobits" with the trailing @ (the Arm comment character) swallowing the compiler's
- * own flag string) so it takes no flash image. The generated linker script has no USER CODE
- * block, so it does not list .noinit and the linker places it as an orphan; the CI map check
- * (README) and boot_noinit_placement_ok() guard that it lands below the stack region.
+ * Abnormal-reset counter: .noinit RAM, not cleared by the startup (which zeroes only .bss). The
+ * section name is declared NOBITS ("%nobits", the trailing @ is the Arm comment character and
+ * swallows the compiler's own flag string) so it takes no flash image. The generated linker
+ * script has no USER CODE block, so it does not list .noinit and the linker places it as an
+ * orphan after .bss. Two guards: tools/check_noinit.py (CI, on the linked ELF: NOBITS, start at
+ * or above _ebss, end at or below _sstack) and boot_noinit_placement_ok() at run time, which
+ * checks both .noinit objects against the same two linker symbols.
  */
 __attribute__((section(".noinit,\"aw\",%nobits@"))) static reset_counter_t s_reset_counter;
 
@@ -43,6 +48,11 @@ static reset_cause_t s_reset_cause = RESET_CAUSE_UNKNOWN;
 static uint32_t s_hw_config_flags;
 
 extern uint32_t _sstack; /* linker: bottom of the stack region (_estack - _Min_Stack_Size) */
+extern uint32_t _ebss;   /* linker: end of .bss (the startup zeroes up to here only) */
+
+static fault_record_t s_prev_fault;
+static bool s_prev_fault_valid;
+static bool s_can_fault;
 
 void boot_fault_safe_state(uint32_t tag)
 {
@@ -51,37 +61,51 @@ void boot_fault_safe_state(uint32_t tag)
 
 bool boot_fault_record_get(fault_record_t *out)
 {
-    const bool ok = fault_record_valid(&g_boot_fault_record);
-
-    if (ok) {
-        *out = g_boot_fault_record;
+    if (s_prev_fault_valid) {
+        *out = s_prev_fault;
     }
-    return ok;
+    return s_prev_fault_valid;
 }
 
 void boot_fault_record_clear(void)
 {
-    g_boot_fault_record.magic = 0u;
+    s_prev_fault_valid = false;
 }
 
-/* True if the .noinit record lies fully below the stack region, so it cannot alias the stack. */
+/* True if both .noinit objects lie at or above _ebss (never zeroed by the startup) and end at or
+ * below _sstack (cannot alias the stack). */
 static bool boot_noinit_placement_ok(void)
 {
-    const uintptr_t end = (uintptr_t)&s_reset_counter + sizeof(s_reset_counter);
+    // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
+    const uintptr_t lo = (uintptr_t)&_ebss;
+    const uintptr_t hi = (uintptr_t)&_sstack;
+    const uintptr_t a = (uintptr_t)&s_reset_counter;
+    const uintptr_t b = (uintptr_t)&g_boot_fault_record;
+    // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
 
-    return end <= (uintptr_t)&_sstack;
+    return (a >= lo) && ((a + sizeof(s_reset_counter)) <= hi) && (b >= lo) &&
+           ((b + sizeof(g_boot_fault_record)) <= hi);
 }
 
 void boot_reset_cause_capture(void)
 {
+    // cppcheck-suppress misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
     s_reset_csr = RCC->CSR;
     s_reset_cause = reset_cause_decode(s_reset_csr);
+    // cppcheck-suppress misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
     RCC->CSR |= RCC_CSR_RMVF;
     /* Write RMVF back to 0 explicitly: RM0440 does not say it self-clears, and a bit left at 1
      * would keep clearing the flags of the next warm reset before software could read them. */
+    // cppcheck-suppress misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
     RCC->CSR &= ~RCC_CSR_RMVF;
     if (boot_noinit_placement_ok()) {
-        (void)reset_counter_update(&s_reset_counter, s_reset_cause);
+        /* Take over the previous run's fault record and clear it, so one fault is counted once. */
+        s_prev_fault_valid = fault_record_valid(&g_boot_fault_record);
+        if (s_prev_fault_valid) {
+            s_prev_fault = g_boot_fault_record;
+        }
+        g_boot_fault_record.magic = 0u;
+        (void)reset_counter_update(&s_reset_counter, s_reset_cause, s_prev_fault_valid);
     }
 }
 
@@ -95,20 +119,22 @@ reset_cause_t boot_reset_cause(void)
     return s_reset_cause;
 }
 
-uint32_t boot_iwdg_reset_count(void)
+uint32_t boot_abnormal_reset_count(void)
 {
     return reset_counter_valid(&s_reset_counter) ? s_reset_counter.count : 0u;
 }
 
-void boot_iwdg_reset_count_clear(void)
+void boot_abnormal_reset_count_clear(void)
 {
     reset_counter_set(&s_reset_counter, 0u);
 }
 
 void boot_hw_config_check(void)
 {
+    // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
     s_hw_config_flags = hw_config_check_optr(FLASH->OPTR) |
                         hw_config_check_iwdg(IWDG->PR, IWDG->RLR, IWDG->WINR);
+    // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
 }
 
 uint32_t boot_hw_config_flags(void)
@@ -121,10 +147,10 @@ bool boot_fdcan_timing_ok(const FDCAN_HandleTypeDef *hfdcan, uint32_t expected_b
     bool ok = false;
 
     if ((hfdcan != NULL) && (hfdcan->Instance != NULL)) {
-        /* HAL returns the clock source frequency; the FDCAN_CKDIV divider (PDIV, 0 = /1, n = /2n) follows. */
+        /* HAL returns the clock source frequency; the FDCAN_CKDIV divider (PDIV) follows. */
+        // cppcheck-suppress misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
         const uint32_t pdiv = FDCAN_CONFIG->CKDIV & FDCAN_CKDIV_PDIV_Msk;
-        const uint32_t kernel_hz = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_FDCAN) /
-                                   ((pdiv == 0u) ? 1u : (2u * pdiv));
+        const uint32_t kernel_hz = can_timing_kernel_hz(HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_FDCAN), pdiv);
 
         ok = can_timing_nbtp_ok(kernel_hz, hfdcan->Instance->NBTP, expected_bps);
     }
@@ -133,8 +159,16 @@ bool boot_fdcan_timing_ok(const FDCAN_HandleTypeDef *hfdcan, uint32_t expected_b
 
 HAL_StatusTypeDef boot_fdcan_start(FDCAN_HandleTypeDef *hfdcan, uint32_t expected_bps)
 {
-    if (!boot_fdcan_timing_ok(hfdcan, expected_bps)) {
-        boot_safe_state(FAULT_TAG_ERROR_HANDLER);
+    HAL_StatusTypeDef status = HAL_ERROR;
+
+    if (boot_fdcan_timing_ok(hfdcan, expected_bps)) {
+        status = HAL_FDCAN_Start(hfdcan);
     }
-    return HAL_FDCAN_Start(hfdcan);
+    s_can_fault = (status != HAL_OK); /* controller stays stopped on a mismatch, no reset */
+    return status;
+}
+
+bool boot_can_fault(void)
+{
+    return s_can_fault;
 }

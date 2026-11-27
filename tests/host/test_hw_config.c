@@ -1,6 +1,6 @@
 /*
  * L0 tests for hal/hw_config: FLASH_OPTR and IWDG register comparison against the configured
- * values of cubemx/README.md (nSWBOOT0=0 nBOOT0=1 BOR_LEV=4 IWDG_SW=0; IWDG /32, reload 99).
+ * values of cubemx/README.md (nSWBOOT0=0 nBOOT0=1 BOR_LEV=4 IWDG_SW=0 NRST_MODE=3; IWDG /32, reload 99).
  */
 #include "hal/hw_config.h"
 
@@ -9,9 +9,9 @@
 
 /* A FLASH_OPTR as the README command leaves it: BOR_LEV 4, IWDG_SW 0, nSWBOOT0 0, nBOOT0 1,
  * every other bit at an arbitrary factory-like value that must be ignored. */
-#define OPTR_GOOD (0x08000400u)
+#define OPTR_GOOD (0x38000400u)
 #define OPTR_NOISE (0xF3FEE0FFu & ~(HW_CONFIG_OPTR_IWDG_SW_MASK | HW_CONFIG_OPTR_NSWBOOT0_MASK | \
-                                   HW_CONFIG_OPTR_NBOOT0_MASK | 0x700u))
+                                   HW_CONFIG_OPTR_NBOOT0_MASK | 0x700u | 0x30000000u))
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -38,6 +38,8 @@ static void test_each_field_alone(void)
     TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_IWDG_SW, hw_config_check_optr(OPTR_GOOD | HW_CONFIG_OPTR_IWDG_SW_MASK));
     TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_BOOT_SRC, hw_config_check_optr(OPTR_GOOD | HW_CONFIG_OPTR_NSWBOOT0_MASK));
     TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_BOOT_SRC, hw_config_check_optr(OPTR_GOOD & ~HW_CONFIG_OPTR_NBOOT0_MASK));
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NRST_MODE, hw_config_check_optr((OPTR_GOOD & ~0x30000000u) | 0x20000000u));
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NRST_MODE, hw_config_check_optr(OPTR_GOOD & ~0x30000000u));
 }
 
 static void test_iwdg_registers(void)

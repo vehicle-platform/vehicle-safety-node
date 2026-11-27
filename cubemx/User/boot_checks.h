@@ -33,11 +33,13 @@ extern "C" {
  */
 static inline __attribute__((always_inline)) void boot_outputs_off(void)
 {
+    // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
     RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN | RCC_AHB2ENR_GPIOBEN | RCC_AHB2ENR_GPIOCEN;
     (void)RCC->AHB2ENR;
     GPIOC->BSRR = (((uint32_t)GPIO_PIN_2 | (uint32_t)GPIO_PIN_4 | (uint32_t)GPIO_PIN_5) << 16U);
     GPIOB->BSRR = (((uint32_t)GPIO_PIN_0 | (uint32_t)GPIO_PIN_1) << 16U);
     GPIOA->BSRR = ((uint32_t)GPIO_PIN_5) << 16U;
+    // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
     __DSB();
 }
 
@@ -53,12 +55,15 @@ static inline __attribute__((always_inline, noreturn)) void boot_safe_state(uint
 {
     __disable_irq();
     boot_outputs_off();
-    /* Plain stores, no call: which path ran and CFSR/HFSR, for the next boot to report. */
-    fault_record_store(&g_boot_fault_record, tag, SCB->CFSR, SCB->HFSR);
+    /* Plain stores, no call: which path ran, CFSR/HFSR and RCC CIFR (CSSF), for the next boot. */
+    // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
+    fault_record_store(&g_boot_fault_record, tag, SCB->CFSR, SCB->HFSR, RCC->CIFR);
     SCB->AIRCR = (0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | (SCB->AIRCR & SCB_AIRCR_PRIGROUP_Msk) |
+    // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
                  SCB_AIRCR_SYSRESETREQ_Msk;
     __DSB();
     for (;;) {
+        // cppcheck-suppress misra-c2012-17.3 ; DEV-006: CMSIS intrinsic __NOP() is inline asm, tool false positive
         __NOP();
     }
 }
@@ -70,24 +75,30 @@ static inline __attribute__((always_inline, noreturn)) void boot_safe_state(uint
  * not trusted, and the fault is never resumed, so restarting the stack at the top is safe. Use
  * only as the whole body of a function declared __attribute__((naked)).
  */
-#define BOOT_FAULT_ENTRY(tag)               \
-    __asm volatile("ldr r1, =_estack\n"     \
-                   "msr msp, r1\n"          \
-                   "isb\n"                  \
-                   "movs r0, %0\n"          \
-                   "b boot_fault_safe_state\n" \
-                   : : "i"(tag) : "r0", "r1")
+// cppcheck-suppress misra-c2012-20.10 ; DEV-005: # and ## build the asm literal of the naked fault entry
+#define BOOT_STR_(x) #x
+#define BOOT_STR(x) BOOT_STR_(x)
+/* Basic asm only (naked functions allow nothing else): tag_n is the plain FAULT_TAG_*_N number. */
+// cppcheck-suppress misra-c2012-20.10 ; DEV-005: # and ## build the asm literal of the naked fault entry
+#define BOOT_FAULT_ENTRY(tag_n)                  \
+    __asm volatile("ldr r1, =_estack\n"          \
+                   "msr msp, r1\n"               \
+                   "isb\n"                       \
+                   "movs r0, #" BOOT_STR(tag_n) "\n" \
+                   "b boot_fault_safe_state\n")
 
 /* Target of BOOT_FAULT_ENTRY(); a function (not inline) because the asm branches to it by name. */
 void boot_fault_safe_state(uint32_t tag) __attribute__((noreturn, used));
 
-/* Fault record of the previous run (valid only if a fault path stored one). */
+/* Fault record of the previous run, copied at boot (false if no fault path stored one). */
 bool boot_fault_record_get(fault_record_t *out);
 void boot_fault_record_clear(void);
 
 /*
- * Reset cause and IWDG reset counter. boot_reset_cause_capture() reads RCC->CSR, stores it,
- * clears the flags with RMVF and updates the .noinit counter; call it first in main(), before
+ * Reset cause and abnormal-reset counter. boot_reset_cause_capture() reads RCC->CSR, stores it,
+ * clears the flags with RMVF, takes over the previous run's fault record and updates the
+ * .noinit counter (hal/reset_cause.h: IWDG, WWDG, low power and fault-record software resets
+ * count; power-on/BOR/NRST-pin clear); call it first in main(), before
  * any other init (nothing earlier reads or clears CSR: Reset_Handler and SystemInit leave it
  * alone). The raw value, the decoded cause and the count stay readable afterwards.
  * No CAN report yet: HeartbeatSafety (0x082) has only SAFETY_NODE_MODE, SAFETY_ERROR_COUNT and
@@ -97,10 +108,10 @@ void boot_reset_cause_capture(void);
 uint32_t boot_reset_cause_raw(void);
 reset_cause_t boot_reset_cause(void);
 
-/* Consecutive IWDG resets so far (this boot included). T13 clears it after a healthy run
- * with boot_iwdg_reset_count_clear() and feeds it to boot_should_safe_halt() (hal/reset_cause.h). */
-uint32_t boot_iwdg_reset_count(void);
-void boot_iwdg_reset_count_clear(void);
+/* Consecutive abnormal resets so far (this boot included). T13 clears it after a healthy run
+ * with boot_abnormal_reset_count_clear() and feeds it to boot_should_safe_halt() (hal/reset_cause.h). */
+uint32_t boot_abnormal_reset_count(void);
+void boot_abnormal_reset_count_clear(void);
 
 /*
  * Option-byte / IWDG / BOR boot check: FLASH->OPTR and the IWDG registers against
@@ -127,10 +138,14 @@ uint32_t boot_hw_config_flags(void);
 bool boot_fdcan_timing_ok(const FDCAN_HandleTypeDef *hfdcan, uint32_t expected_bps);
 
 /*
- * The only way the image starts the FDCAN controller: on a failed timing check it goes to the
- * safe state (reset) and the controller is not started; otherwise it returns HAL_FDCAN_Start().
+ * The only way the image starts the FDCAN controller. A failed timing check does NOT reset the
+ * node: the controller stays stopped, boot_can_fault() reads true and HAL_ERROR is returned. A
+ * stopped controller receives nothing, so every rt-core input times out and stays invalid and
+ * the D-042 own-IMU fallback and the blind-spot decision keep running (invariant 3, a node
+ * without a working bus must not reset-loop). Otherwise it returns HAL_FDCAN_Start().
  */
 HAL_StatusTypeDef boot_fdcan_start(FDCAN_HandleTypeDef *hfdcan, uint32_t expected_bps);
+bool boot_can_fault(void);
 
 #ifdef __cplusplus
 }

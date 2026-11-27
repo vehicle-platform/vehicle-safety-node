@@ -15,3 +15,7 @@ compile_commands.json
 *.keystore
 
 /cubemx/build/
+
+# cppcheck addon dumps (17 MB each) and CTU info
+*.dump
+*.ctu-info

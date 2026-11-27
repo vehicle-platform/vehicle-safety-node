@@ -9,8 +9,10 @@
  *
  * Several flags are set at once on most resets (every reset also drives the NRST pin flag, a
  * power-on reset also sets the BOR flag; the G4 has no separate POR flag), so the decode is a
- * fixed priority, most specific first: IWDG, WWDG, low power, software, option-byte load,
- * BOR (power-on or brown-out), pin. A value with none of the known flags (including 0) is
+ * fixed priority, most specific first: IWDG, WWDG, low power, software, BOR (power-on or
+ * brown-out), option-byte load, pin. BOR is decoded before OBL until target measurements show
+ * which flags a power-on really sets (an option-byte reload that also set BOR reads as BOR,
+ * which only clears the counter, the safe direction for a power cycle). A value with none of the known flags (including 0) is
  * RESET_CAUSE_UNKNOWN. The bit positions are the RM0440 positions; the cubemx build asserts
  * them against the CMSIS RCC_CSR_*_Msk macros.
  */
@@ -56,10 +58,10 @@ static inline reset_cause_t reset_cause_decode(uint32_t csr)
         cause = RESET_CAUSE_LOW_POWER;
     } else if ((csr & RESET_CAUSE_CSR_SFTRSTF) != 0u) {
         cause = RESET_CAUSE_SOFTWARE;
-    } else if ((csr & RESET_CAUSE_CSR_OBLRSTF) != 0u) {
-        cause = RESET_CAUSE_OPTION_BYTE_LOAD;
     } else if ((csr & RESET_CAUSE_CSR_BORRSTF) != 0u) {
         cause = RESET_CAUSE_POWER_ON_OR_BROWN_OUT;
+    } else if ((csr & RESET_CAUSE_CSR_OBLRSTF) != 0u) {
+        cause = RESET_CAUSE_OPTION_BYTE_LOAD;
     } else if ((csr & RESET_CAUSE_CSR_PINRSTF) != 0u) {
         cause = RESET_CAUSE_PIN;
     } else {
@@ -69,7 +71,7 @@ static inline reset_cause_t reset_cause_decode(uint32_t csr)
 }
 
 /*
- * IWDG reset counter kept in .noinit RAM across resets. A cold boot leaves the RAM as garbage,
+ * Abnormal-reset counter kept in .noinit RAM across resets. A cold boot leaves the RAM as garbage,
  * so the record carries a magic word and the bitwise inverse of the count; anything that does
  * not match is treated as "no history" and restarts at 0. The record is plain data (no
  * pointers), 12 bytes.
@@ -96,20 +98,31 @@ static inline void reset_counter_set(reset_counter_t *rc, uint32_t count)
     rc->count_inv = ~count;
 }
 
+/* True for the resets that count toward the safe-halt limit (consecutive abnormal resets):
+ * IWDG, WWDG, illegal low-power entry, and a software reset that left a valid fault record
+ * (the fault/Error_Handler path, which ends in SYSRESETREQ). A software reset without a
+ * record is a deliberate one (not abnormal, count unchanged). */
+static inline bool reset_cause_is_abnormal(reset_cause_t cause, bool has_fault_record)
+{
+    return (cause == RESET_CAUSE_IWDG) || (cause == RESET_CAUSE_WWDG) ||
+           (cause == RESET_CAUSE_LOW_POWER) || ((cause == RESET_CAUSE_SOFTWARE) && has_fault_record);
+}
+
 /*
  * Boot-time update with the decoded cause. An invalid record (cold boot, corruption) restarts
- * at 0 first. Then: IWDG increments (saturating); power-on/brown-out and the NRST pin reset
- * clear (a deliberate or electrical restart ends a watchdog loop); every other cause (WWDG,
- * software reset from the fault/Error_Handler path, low power, option-byte load, unknown) leaves
- * the count unchanged, so a fault that ends in SYSRESETREQ does not hide an IWDG loop.
+ * at 0 first. Then: every abnormal reset (reset_cause_is_abnormal) increments (saturating), so
+ * an HSE-timeout, watchdog or fault reset loop is counted; power-on/brown-out and the
+ * NRST-pin-only reset clear (a deliberate or electrical restart ends a loop); every other cause
+ * (deliberate software reset, option-byte load, unknown) leaves the count unchanged.
  * Returns the count after the update.
  */
-static inline uint32_t reset_counter_update(reset_counter_t *rc, reset_cause_t cause)
+static inline uint32_t reset_counter_update(reset_counter_t *rc, reset_cause_t cause,
+                                            bool has_fault_record)
 {
     if (!reset_counter_valid(rc)) {
         reset_counter_set(rc, 0u);
     }
-    if (cause == RESET_CAUSE_IWDG) {
+    if (reset_cause_is_abnormal(cause, has_fault_record)) {
         if (rc->count < RESET_COUNTER_MAX) {
             reset_counter_set(rc, rc->count + 1u);
         }
@@ -122,7 +135,7 @@ static inline uint32_t reset_counter_update(reset_counter_t *rc, reset_cause_t c
 }
 
 /*
- * Safe-halt policy input: true when `count` consecutive IWDG resets reached `limit`. A limit of
+ * Safe-halt policy input: true when `count` consecutive abnormal resets reached `limit`. A limit of
  * 0 disables the policy (false), so an unconfigured limit can never halt the node. The halt
  * itself (outputs off, no relay pulse, D-097) is wired in T13.
  */

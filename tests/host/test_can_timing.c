@@ -53,6 +53,18 @@ static void test_no_truncated_rate(void)
     TEST_ASSERT_FALSE(can_timing_ok(KERNEL_HZ, 21u, 14u, 2u, 2u, 476190u));
 }
 
+static void test_kernel_divider(void)
+{
+    TEST_ASSERT_EQUAL_UINT32(170000000u, can_timing_kernel_hz(170000000u, 0u)); /* PDIV 0: /1 */
+    TEST_ASSERT_EQUAL_UINT32(85000000u, can_timing_kernel_hz(170000000u, 1u));  /* /2 */
+    TEST_ASSERT_EQUAL_UINT32(5666666u, can_timing_kernel_hz(170000000u, 15u));  /* /30 */
+    TEST_ASSERT_EQUAL_UINT32(0u, can_timing_kernel_hz(170000000u, 16u));        /* out of range */
+    TEST_ASSERT_EQUAL_UINT32(0u, can_timing_kernel_hz(0u, 0u));
+    /* the divided clock still has to match the NBTP: PDIV 1 with prescaler 10 gives 500 kbit/s */
+    TEST_ASSERT_TRUE(can_timing_nbtp_ok(can_timing_kernel_hz(170000000u, 1u), NBTP(2u, 10u, 14u, 2u), BPS));
+    TEST_ASSERT_FALSE(can_timing_nbtp_ok(can_timing_kernel_hz(170000000u, 1u), NBTP(2u, 20u, 14u, 2u), BPS));
+}
+
 static void test_nbtp_readback(void)
 {
     TEST_ASSERT_TRUE(can_timing_nbtp_ok(KERNEL_HZ, NBTP(2u, 20u, 14u, 2u), BPS));
@@ -71,6 +83,7 @@ int main(void)
     RUN_TEST(test_wrong_values);
     RUN_TEST(test_sample_point_window);
     RUN_TEST(test_no_truncated_rate);
+    RUN_TEST(test_kernel_divider);
     RUN_TEST(test_nbtp_readback);
     return UNITY_END();
 }

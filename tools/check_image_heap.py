@@ -7,13 +7,12 @@ Forbidden (exit 1): the C library heap (malloc, free, calloc, realloc, memalign,
 reentrant `_r` forms, `__malloc_*`) and the `_sbrk` / `_sbrk_r` / `sbrk` break functions. The
 image links cubemx/User/sbrk_fail.c (an `_sbrk` that always fails); even that must not be
 reachable, so any `_sbrk` symbol in the image means something calls into the C library heap.
-This is bare-metal safety code: no FreeRTOS, so the FreeRTOS heap symbols are forbidden too
-(pass --forbid-freertos-heap; kept optional so the tool is reusable). The generated `__sbrk_heap_end` (Src/sysmem.c) must be absent too: it proves the generated
+The generated `__sbrk_heap_end` (Src/sysmem.c) must be absent too: it proves the generated
 newlib heap is not linked.
 
-Residual (reported, exit 0): the FreeRTOS heap_4 allocator (`pvPortMalloc`, `vPortFree`).
-CubeMX cannot turn dynamic allocation off with CMSIS_V2 yet (cubemx/README.md, "Open"). Pass
-`--forbid-freertos-heap` once T13 drops heap_4.c.
+FreeRTOS heap symbols (`pvPortMalloc`, `vPortFree`, ...): reported by default, an error with
+`--forbid-freertos-heap`. The safety node is bare-metal with no FreeRTOS, so its CI always
+passes the flag; other consumers of this tool that still link heap_4 may leave it off.
 """
 import argparse
 import re
@@ -57,7 +56,7 @@ def main():
     for n in bad:
         print(f"error: heap symbol linked: {n}", file=sys.stderr)
     for n in rtos:
-        level = "error" if args.forbid_freertos_heap else "note (residual, see cubemx/README.md Open)"
+        level = "error" if args.forbid_freertos_heap else "note"
         print(f"{level}: FreeRTOS heap symbol linked: {n}", file=sys.stderr)
     if bad or (rtos and args.forbid_freertos_heap):
         return 1

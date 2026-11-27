@@ -79,6 +79,25 @@ static inline bool can_timing_ok(uint32_t kernel_hz, uint32_t prescaler, uint32_
     return ok;
 }
 
+/*
+ * FDCAN kernel clock after the FDCAN_CKDIV divider (G4 only): the RCC delivers `source_hz`, the
+ * PDIV field (register value, 0..15) divides it by 1 for 0 and by 2 * PDIV otherwise (so /30
+ * at most). Returns 0 if PDIV is outside 0..15, so the timing check fails.
+ */
+static inline uint32_t can_timing_kernel_hz(uint32_t source_hz, uint32_t pdiv)
+{
+    uint32_t hz = 0u;
+
+    if (pdiv == 0u) {
+        hz = source_hz;
+    } else if (pdiv <= 15u) {
+        hz = source_hz / (2u * pdiv);
+    } else {
+        /* out of range: 0 */
+    }
+    return hz;
+}
+
 /* FDCAN_NBTP field layout (RM0440, same M_CAN core): NSJW [31:25], NBRP [24:16], NTSEG1 [15:8], NTSEG2 [6:0];
  * every field holds the value minus one. */
 #define CAN_TIMING_NBTP_NSJW_POS 25u

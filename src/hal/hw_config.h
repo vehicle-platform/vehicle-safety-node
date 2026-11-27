@@ -23,9 +23,12 @@ extern "C" {
 #define HW_CONFIG_OPTR_IWDG_SW_MASK 0x00010000u   /* 0 = hardware watchdog */
 #define HW_CONFIG_OPTR_NSWBOOT0_MASK 0x04000000u  /* 0 = boot source from the nBOOT0 bit */
 #define HW_CONFIG_OPTR_NBOOT0_MASK 0x08000000u    /* 1 = boot from main flash */
+#define HW_CONFIG_OPTR_NRST_MODE_POS 28u
+#define HW_CONFIG_OPTR_NRST_MODE_MASK 0x3u        /* 3 = NRST bidirectional (reset input and output) */
 
-/* Expected values (cubemx/README.md: nSWBOOT0=0 nBOOT0=1 BOR_LEV=4 IWDG_SW=0). */
+/* Expected values (cubemx/README.md: nSWBOOT0=0 nBOOT0=1 BOR_LEV=4 IWDG_SW=0 NRST_MODE=3). */
 #define HW_CONFIG_EXPECT_BOR_LEV 4u
+#define HW_CONFIG_EXPECT_NRST_MODE 3u
 #define HW_CONFIG_EXPECT_IWDG_PR 3u      /* prescaler /32 (IWDG_PR code 3) */
 #define HW_CONFIG_EXPECT_IWDG_RLR 99u    /* about 100 ms at 32 kHz LSI */
 #define HW_CONFIG_EXPECT_IWDG_WINR 4095u /* window disabled */
@@ -34,6 +37,7 @@ extern "C" {
 #define HW_CONFIG_BAD_BOR_LEV 0x01u
 #define HW_CONFIG_BAD_IWDG_SW 0x02u    /* software-started IWDG option: not hardware watchdog */
 #define HW_CONFIG_BAD_BOOT_SRC 0x04u   /* nSWBOOT0 != 0 or nBOOT0 != 1 */
+#define HW_CONFIG_BAD_NRST_MODE 0x10u /* NRST not bidirectional: an internal reset would not drive the pin */
 #define HW_CONFIG_BAD_IWDG_TIMING 0x08u /* IWDG PR / RLR / WINR differ from the configuration */
 
 /* Mask of the option-byte mismatches in a FLASH_OPTR value; 0 = as configured. */
@@ -50,6 +54,10 @@ static inline uint32_t hw_config_check_optr(uint32_t optr)
     }
     if (((optr & HW_CONFIG_OPTR_NSWBOOT0_MASK) != 0u) || ((optr & HW_CONFIG_OPTR_NBOOT0_MASK) == 0u)) {
         bad |= HW_CONFIG_BAD_BOOT_SRC;
+    }
+    if (((optr >> HW_CONFIG_OPTR_NRST_MODE_POS) & HW_CONFIG_OPTR_NRST_MODE_MASK) !=
+        HW_CONFIG_EXPECT_NRST_MODE) {
+        bad |= HW_CONFIG_BAD_NRST_MODE;
     }
     return bad;
 }

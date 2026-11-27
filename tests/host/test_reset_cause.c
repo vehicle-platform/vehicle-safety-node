@@ -1,6 +1,6 @@
 /*
  * L0 tests for hal/reset_cause: the RCC_CSR decode (each flag alone, the multi-flag priority of
- * real resets, ignored bits), the IWDG reset counter with its magic + inverted-copy integrity
+ * real resets, ignored bits), the abnormal-reset counter with its magic + inverted-copy integrity
  * check (cold-boot garbage, corruption, saturation, clearing causes) and boot_should_safe_halt.
  */
 #include "hal/reset_cause.h"
@@ -38,7 +38,8 @@ static void test_priority_order(void)
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_SOFTWARE,
                           reset_cause_decode(RESET_CAUSE_CSR_SFTRSTF | RESET_CAUSE_CSR_OBLRSTF |
                                              RESET_CAUSE_CSR_BORRSTF | RESET_CAUSE_CSR_PINRSTF));
-    TEST_ASSERT_EQUAL_INT(RESET_CAUSE_OPTION_BYTE_LOAD,
+    /* BOR is decoded before OBL until target measurements show what a power-on sets. */
+    TEST_ASSERT_EQUAL_INT(RESET_CAUSE_POWER_ON_OR_BROWN_OUT,
                           reset_cause_decode(RESET_CAUSE_CSR_OBLRSTF | RESET_CAUSE_CSR_BORRSTF));
 }
 
@@ -58,7 +59,7 @@ static void test_real_rcc_csr_combinations(void)
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_WWDG, reset_cause_decode(pin | RESET_CAUSE_CSR_WWDGRSTF));
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_LOW_POWER, reset_cause_decode(pin | RESET_CAUSE_CSR_LPWRRSTF));
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_OPTION_BYTE_LOAD, reset_cause_decode(pin | RESET_CAUSE_CSR_OBLRSTF));
-    TEST_ASSERT_EQUAL_INT(RESET_CAUSE_OPTION_BYTE_LOAD, reset_cause_decode(pin | RESET_CAUSE_CSR_OBLRSTF | RESET_CAUSE_CSR_BORRSTF));
+    TEST_ASSERT_EQUAL_INT(RESET_CAUSE_POWER_ON_OR_BROWN_OUT, reset_cause_decode(pin | RESET_CAUSE_CSR_OBLRSTF | RESET_CAUSE_CSR_BORRSTF));
     /* Stale flags that were never cleared: the most specific one still wins. */
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_IWDG, reset_cause_decode(pin | RESET_CAUSE_CSR_IWDGRSTF | RESET_CAUSE_CSR_SFTRSTF | RESET_CAUSE_CSR_BORRSTF));
     TEST_ASSERT_EQUAL_INT(RESET_CAUSE_WWDG, reset_cause_decode(pin | RESET_CAUSE_CSR_WWDGRSTF | RESET_CAUSE_CSR_SFTRSTF));
@@ -70,11 +71,11 @@ static void test_counter_follows_real_sequence(void)
     /* power-on -> IWDG -> IWDG (PIN accompanies each) -> software fault reset -> power cycle */
     reset_counter_t rc = {0u, 0u, 0u};
     const uint32_t pin = RESET_CAUSE_CSR_PINRSTF;
-    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_BORRSTF)));
-    TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_IWDGRSTF)));
-    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_IWDGRSTF)));
-    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_SFTRSTF)));
-    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_BORRSTF)));
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_BORRSTF), false));
+    TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_IWDGRSTF), false));
+    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_IWDGRSTF), false));
+    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_SFTRSTF), false));
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_BORRSTF), false));
 }
 
 static void test_unknown_and_ignored_bits(void)
@@ -98,20 +99,20 @@ static void test_cold_boot_garbage_restarts_at_zero(void)
     for (unsigned i = 0; i < sizeof(garbage) / sizeof(garbage[0]); i++) {
         reset_counter_t rc = garbage[i];
         TEST_ASSERT_FALSE(reset_counter_valid(&rc));
-        TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_SOFTWARE));
+        TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_SOFTWARE, false));
         TEST_ASSERT_TRUE(reset_counter_valid(&rc));
         rc = garbage[i];
-        TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, RESET_CAUSE_IWDG)); /* garbage never inflates */
+        TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, RESET_CAUSE_IWDG, false)); /* garbage never inflates */
     }
 }
 
 static void test_iwdg_counts_consecutively(void)
 {
     reset_counter_t rc = {0u, 0u, 0u};
-    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_POWER_ON_OR_BROWN_OUT));
-    TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, RESET_CAUSE_IWDG));
-    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, RESET_CAUSE_IWDG));
-    TEST_ASSERT_EQUAL_UINT32(3u, reset_counter_update(&rc, RESET_CAUSE_IWDG));
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_POWER_ON_OR_BROWN_OUT, false));
+    TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, RESET_CAUSE_IWDG, false));
+    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, RESET_CAUSE_IWDG, false));
+    TEST_ASSERT_EQUAL_UINT32(3u, reset_counter_update(&rc, RESET_CAUSE_IWDG, false));
     TEST_ASSERT_TRUE(reset_counter_valid(&rc));
 }
 
@@ -119,21 +120,58 @@ static void test_other_causes_keep_or_clear(void)
 {
     reset_counter_t rc;
     reset_counter_set(&rc, 4u);
-    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_SOFTWARE));
-    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_WWDG));
-    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_LOW_POWER));
-    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_OPTION_BYTE_LOAD));
-    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_UNKNOWN));
-    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_PIN));
+    /* deliberate software reset (no fault record), option-byte load, unknown: unchanged */
+    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_SOFTWARE, false));
+    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_OPTION_BYTE_LOAD, false));
+    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_UNKNOWN, false));
+    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_OPTION_BYTE_LOAD, true));
+    /* NRST-pin-only and power-on/BOR clear */
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_PIN, false));
     reset_counter_set(&rc, 4u);
-    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_POWER_ON_OR_BROWN_OUT));
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_POWER_ON_OR_BROWN_OUT, false));
+    reset_counter_set(&rc, 4u);
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, RESET_CAUSE_POWER_ON_OR_BROWN_OUT, true));
+}
+
+static void test_every_abnormal_reset_counts(void)
+{
+    reset_counter_t rc;
+    reset_counter_set(&rc, 0u);
+    TEST_ASSERT_EQUAL_UINT32(1u, reset_counter_update(&rc, RESET_CAUSE_IWDG, false));
+    TEST_ASSERT_EQUAL_UINT32(2u, reset_counter_update(&rc, RESET_CAUSE_WWDG, false));
+    TEST_ASSERT_EQUAL_UINT32(3u, reset_counter_update(&rc, RESET_CAUSE_LOW_POWER, false));
+    TEST_ASSERT_EQUAL_UINT32(4u, reset_counter_update(&rc, RESET_CAUSE_SOFTWARE, true));
+    TEST_ASSERT_TRUE(reset_cause_is_abnormal(RESET_CAUSE_SOFTWARE, true));
+    TEST_ASSERT_FALSE(reset_cause_is_abnormal(RESET_CAUSE_SOFTWARE, false));
+    TEST_ASSERT_FALSE(reset_cause_is_abnormal(RESET_CAUSE_PIN, true));
+    TEST_ASSERT_FALSE(reset_cause_is_abnormal(RESET_CAUSE_POWER_ON_OR_BROWN_OUT, true));
+}
+
+static void test_fault_reset_loop_reaches_the_limit(void)
+{
+    /* A fault (or Error_Handler, e.g. an HSE timeout) that ends in SYSRESETREQ each time, with a
+     * valid fault record, reaches the halt limit; a power cycle clears it. */
+    const uint32_t limit = 5u;
+    const uint32_t pin = RESET_CAUSE_CSR_PINRSTF;
+    reset_counter_t rc = {0u, 0u, 0u};
+    uint32_t n = 0u;
+    for (int i = 0; i < 5; i++) {
+        n = reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_SFTRSTF), true);
+        TEST_ASSERT_EQUAL_UINT32((i == 4) ? 1u : 0u, (uint32_t)boot_should_safe_halt(n, limit));
+    }
+    TEST_ASSERT_TRUE(boot_should_safe_halt(n, limit));
+    n = reset_counter_update(&rc, reset_cause_decode(pin | RESET_CAUSE_CSR_BORRSTF), false);
+    TEST_ASSERT_EQUAL_UINT32(0u, n);
+    TEST_ASSERT_FALSE(boot_should_safe_halt(n, limit));
+    reset_counter_set(&rc, 4u);
+    TEST_ASSERT_EQUAL_UINT32(0u, reset_counter_update(&rc, reset_cause_decode(pin), true)); /* pin only */
 }
 
 static void test_saturates_and_detects_corruption(void)
 {
     reset_counter_t rc;
     reset_counter_set(&rc, RESET_COUNTER_MAX);
-    TEST_ASSERT_EQUAL_UINT32(RESET_COUNTER_MAX, reset_counter_update(&rc, RESET_CAUSE_IWDG));
+    TEST_ASSERT_EQUAL_UINT32(RESET_COUNTER_MAX, reset_counter_update(&rc, RESET_CAUSE_IWDG, false));
     reset_counter_set(&rc, 3u);
     rc.count ^= 0x4u; /* single bit flip */
     TEST_ASSERT_FALSE(reset_counter_valid(&rc));
@@ -164,6 +202,8 @@ int main(void)
     RUN_TEST(test_cold_boot_garbage_restarts_at_zero);
     RUN_TEST(test_iwdg_counts_consecutively);
     RUN_TEST(test_other_causes_keep_or_clear);
+    RUN_TEST(test_every_abnormal_reset_counts);
+    RUN_TEST(test_fault_reset_loop_reaches_the_limit);
     RUN_TEST(test_saturates_and_detects_corruption);
     RUN_TEST(test_safe_halt_policy);
     return UNITY_END();
