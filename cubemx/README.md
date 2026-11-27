@@ -43,7 +43,7 @@ Loading the `.ioc` logs CubeMX messages that cannot be removed: one `Pin<N> (VP_
 | APB1 / APB2 | 170 MHz (no divider) |
 | Flash latency | 4 wait states (`FLASH_LATENCY_4`) |
 | FDCAN kernel clock | PCLK1 = 170 MHz (500 kbit/s divides exactly, e.g. prescaler 20 x 17 time quanta) |
-| RTC | not used. `safety-node.ioc` selects `RCC_RTCCLKSOURCE_LSE` and the LSE pins PC14/PC15 are in LSE mode, but `SystemClock_Config` (`Src/main.c:149`) starts only the HSE and the PLL: the generated code never starts the LSE and no RTC peripheral is initialised |
+| RTC | not used. `safety-node.ioc` selects `RCC_RTCCLKSOURCE_LSE` and the LSE pins PC14/PC15 are in LSE mode, but `SystemClock_Config` (`Src/main.c:147`) starts only the HSE, the PLL and the LSI (for the IWDG): the generated code never starts the LSE and no RTC peripheral is initialised |
 
 ## SPI2 (own MPU-6500 IMU, plan: PB13 SCK, PB14 MISO, PB15 MOSI, AF5)
 
@@ -53,22 +53,81 @@ The CubeMX board support package (BSP COMMON) is removed from the project becaus
 
 ## Open
 
-- FDCAN bit timing (500 kbit/s) is not configured yet.
 - DMA channel allocation (TIM3_CH1 and TIM3_CH2 on DMA1 channels 1 and 2) is a proposal; the plan says to verify it in CubeMX.
-- Timer periods (LED ring), I2C timing, UART baud rates, IWDG and every other parameter: CubeMX defaults.
+- Timer periods (LED ring), I2C timing, UART baud rates and every other parameter not named in this file: CubeMX defaults.
 - The linker script and the clock/reset/option-byte init are CubeMX defaults (red zone: need a `safety-reviewer` pass before they are final).
 - The newlib heap is linked (`_Min_Heap_Size 0x200`, `STM32G474xx_FLASH.ld:66`, reserved at `:235`; `_sbrk` in `Src/sysmem.c:54`). Invariant 5 forbids dynamic memory on this MCU.
-- Option bytes are not set: nSWBOOT0/nBOOT0, `BOR_LEV` and `IWDG_SW` are at their factory values.
-- `Error_Handler` (`Src/main.c:611`) disables IRQs and spins; it does not drive the outputs to a safe state.
+- Option bytes are not set by the image: nSWBOOT0/nBOOT0, `BOR_LEV` and `IWDG_SW` are at their factory values until the first-flash command below is run.
+
+## Pre-power-on hardening (T6b, 2026-11-27)
+
+The design choices below are PROVISIONAL under D-134 item 3 (optimise later).
+
+### FDCAN1 (platform bus)
+
+Classic CAN, no BRS, `FDCAN_MODE_NORMAL`. Nominal 500 kbit/s from the 170 MHz PCLK1 kernel clock: prescaler 20 (8.5 MHz, 117.6 ns tq), sync jump width 2, time segment 1 = 14, time segment 2 = 2, so 1 + 14 + 2 = 17 tq per bit, sample point 15/17 = 88.2 %. Generated: `Src/main.c:211-214`. `StdFiltersNbr = 4` (`Src/main.c:223`): three safety IDs (0x020, 0x022, 0x081) in RX FIFO 0 and 0x120 in RX FIFO 1, per `src/hal/can.h`. The G474 HAL has a fixed message RAM (3 RX FIFO 0 elements, 3 RX FIFO 1 elements, 3 TX elements), so the FIFO depths are not configurable here. The filter elements themselves, the global filter (reject every non-matching standard frame, reject remote frames, reject extended frames, FD operation off), FIFO blocking mode and the boot self-check are code, not CubeMX configuration: T13 (`hal/can`). No FDCAN interrupt is enabled yet.
+
+### IWDG
+
+LSI 32 kHz (started in `SystemClock_Config`, `Src/main.c:161`), prescaler /32 (1 kHz tick), reload 99 (`Src/main.c:296-298`): **timeout about 100 ms, PROPOSED** (nothing in `CLAUDE.md`, the pin plan or DECISIONS fixes a value; D-118 item 5 only requires an independent watchdog). The LSI tolerance (RM0440 / datasheet: roughly 29.5 to 34 kHz) moves it to about 94 to 108 ms. Window disabled (4095). It is refreshed once per super-loop iteration in `main`'s USER CODE (`Src/main.c:135`); the loop is a placeholder until T13, and **the watchdog/heartbeat module owns the refresh from T13**, after the decision steps. The loop must therefore finish in well under 100 ms, and the init after `MX_IWDG_Init` up to the first refresh must too. With a debugger halted the IWDG keeps counting (the freeze bit `DBG_IWDG_STOP` is not set), so breakpoints reset the MCU unless it is set while debugging. It is started by the option byte `IWDG_SW = 0` (below) before any code runs and again by `HAL_IWDG_Init`.
+
+### Error_Handler
+
+IRQs off, then `safety_outputs_off()` (USER CODE 4 in `Src/main.c`, declared in `Inc/main.h`): the GPIO clocks are enabled and every actuator output is driven low through BSRR (direct registers, independent of `MX_GPIO_Init`); then `NVIC_SystemReset()`, no spin. The same `safety_outputs_off()` runs first in the NMI, HardFault, MemManage, BusFault and UsageFault handlers (`Src/stm32g4xx_it.c`), which then spin until the IWDG resets the MCU. **A reset does not mean "unlocked":** the latching immobilizer relay keeps a LOCKED latch through a reset, and a SET pulse cut short can leave it in an unknown state (D-097); the boot handling of that state is T13 (below). Final set (labels from `g474-pin-plan.md` section 3):
+
+| Pin | Label | Why |
+|---|---|---|
+| PC4 | `IMMO_SET` | relay coil pulse, must never stay energised (invariant 6) |
+| PC5 | `IMMO_RESET` | relay coil pulse, same |
+| PC2 | `DEADMAN_KICK` | low stops the retrigger, so the external dead-man drops the ring supply (D-072 item 5) |
+| PB0 | mirror LED left | "side clear" is never a static output |
+| PB1 | mirror LED right | same |
+| PA5 | status LED LD2 | not safety relevant, driven low for a defined state |
+
+PB12 (`CS_IMU_SAFETY`) is deliberately left alone (chip select, idle high, not an actuator). PC6/PC7 (LED ring data, TIM3 AF) are not touched: the ring is made safe by the dead-man supply cut, and the reset stops the timer.
+
+### NVIC priorities (group 4: 4 preemption bits, 0 = highest)
+
+| IRQ | Priority | Note |
+|---|---|---|
+| SysTick (HAL tick) | 0 | CubeMX default |
+| FDCAN1 | not enabled yet | T13 must give it a number below 5 (proposal 1) |
+| Schedule timer | not present yet | T13 must give it a number below 5 (proposal 2) |
+| DMA1 channel 1 (TIM3_CH1, LED ring left) | 5 | `Src/main.c:567` |
+| DMA1 channel 2 (TIM3_CH2, LED ring right) | 5 | `Src/main.c:570` |
+
+### RTC and LSE
+
+Unchanged: the pin plan does not need the RTC now. The LSE is never started (the LSI is started for the IWDG only).
+
+### First flash: option bytes (cannot be set without hardware)
+
+Run once on every new board, with the board connected over SWD:
+
+```
+STM32_Programmer_CLI -c port=SWD -ob nSWBOOT0=0 nBOOT0=1 BOR_LEV=4 IWDG_SW=0
+```
+
+| Option | Value | Why |
+|---|---|---|
+| `nSWBOOT0` = 0 | boot source taken from the `nBOOT0` bit, not the BOOT0 pin | a stray level on PB8 (BOOT0 pin) at reset cannot enter the system bootloader |
+| `nBOOT0` = 1 | boot from main flash | with nSWBOOT0 = 0 this selects flash |
+| `BOR_LEV` = 4 | brownout reset at the highest threshold (nominal 2.8 V falling) | a cold crank dip of the 3.3 V rail at 170 MHz resets the MCU cleanly instead of running with a corrupt state; the node boots unlocked |
+| `IWDG_SW` = 0 | hardware watchdog: the IWDG starts at reset | it runs even if the software never reaches `MX_IWDG_Init`, and software cannot stop it |
+
+CONFIRM before the first use: the option names as spelled by the installed STM32CubeProgrammer (`-ob displ` lists them) and the `BOR_LEV` code to voltage mapping (RM0440 FLASH_OPTR; the header `stm32g474xx.h:5241-5245` defines the codes 0 to 4, the voltages are quoted from memory, the reference manual was not available locally). Check the result with `-ob displ`.
 
 ## Must fix before first power-on (safety review 2026-11-27)
 
-Recorded, not implemented. Line numbers refer to the generated files in this folder.
-
-- [ ] No IWDG, although `CLAUDE.md` and the pin plan require one. Prefer the hardware IWDG started by the `IWDG_SW` option byte.
-- [ ] `Error_Handler` (`Src/main.c:611-619`) must first drive PC4, PC5, PB0, PB1 and PC2 low (the outputs initialised at `Src/main.c:554-560`), then let the IWDG reset the MCU. A fault during an IMMO pulse otherwise keeps the bistable relay coil energised.
-- [ ] Option bytes: nSWBOOT0 = 0 and nBOOT0 = 1 (boot from flash regardless of the BOOT0 pin), a raised `BOR_LEV`.
-- [ ] FDCAN1 is at the CubeMX default: prescaler 16, 3 tq, about 3.54 Mbit/s, `FDCAN_MODE_NORMAL` (`Src/main.c:196`, `:200-203`). It needs 500 kbit/s from `vehicle-defs`, the D-118(d) filters, FIFOs and reject-by-default (`StdFiltersNbr` is 0 at `:208`), and a boot self-check.
-- [ ] The LED-ring DMA IRQs are at priority 0 (`Src/main.c:527`, `:530`). Rank them below the schedule timer and FDCAN.
-- [ ] Replace `_sbrk` (`Src/sysmem.c:54`) with a stub that always fails, and add a CI `nm` gate that rejects `malloc` and `_sbrk` in the image.
-
+- [x] IWDG: enabled, LSI /32, reload 99, about 100 ms, refreshed once per loop iteration (`Src/main.c:296-298`, `:135`). The hardware start by `IWDG_SW = 0` is the first-flash command above (open until run on the board). The refresh moves to the watchdog/heartbeat module in T13.
+- [x] `Error_Handler` drives PC4, PC5, PC2, PB0, PB1 (and PA5) low, then `NVIC_SystemReset()` (`Src/main.c:651`). Not yet tested on a target (a fault injection test belongs to T13).
+- [ ] Option bytes: command written above, not yet applied (needs the board). Open until the first flash.
+- [~] FDCAN1: bit timing 500 kbit/s and `StdFiltersNbr = 4` done (`Src/main.c:211-219`). Still open for T13: the filter elements, the global filter that rejects non-matching, remote and FD frames (not expressible in CubeMX), FIFO blocking mode, interrupts, and the boot self-check.
+- [x] LED-ring DMA IRQs at priority 5, below SysTick (0); FDCAN and the schedule timer must be given a number below 5 when they are enabled (table above).
+- [ ] Replace `_sbrk` (`Src/sysmem.c:54`) with a stub that always fails, and add a CI `nm` gate that rejects `malloc` and `_sbrk` in the image. Open: `sysmem.c` is a generated file outside USER CODE blocks and the project template has no switch for it; it is part of the T13 wiring (together with `_Min_Heap_Size` in the linker script).
+- [ ] New: a boot-time check that the IWDG, option bytes and BOR level are really as configured (read `FLASH->OPTR`), T13.
+- [ ] Immobilizer state at boot (safety review 2026-11-27, D-097): after any reset the relay state is unknown (LOCKED survives a reset, a truncated SET pulse is undefined): either treat it as unknown and start the 10 s unlock timer, or send a RESET (unlock) pulse at boot. T13 (`features/immobilizer`).
+- [ ] Reset cause (safety review 2026-11-27): read and clear `RCC->CSR` (`RMVF`) at boot, count IWDG resets in `.noinit` RAM, report the cause in 0x082 `HeartbeatSafety`, and hold a safe halt (outputs off) after N consecutive watchdog resets, so a dead HSE is not a silent reset loop. T13.
+- [ ] Watchdog refresh only after a flow-check token proves every step of the loop ran (consider the window); bound every I2C/SPI timeout (no `HAL_MAX_DELAY`; the PN532 init must fit in the 100 ms budget). T13.
+- [ ] `safety_outputs_off()` must not push onto the stack when called from a HardFault caused by a stack overflow or a corrupt MSP (else a lockup keeps the outputs live until the IWDG, about 100 ms): make it `static inline __attribute__((always_inline))` in a header, or check the -O0 disassembly. T13.
+- [ ] Target fault injection: `Error_Handler` and a HardFault during a SET pulse (scope on PC4/PC5); HIL: reset or brownout while LOCKED, IWDG starvation with the reset cause reported, 500 kbit/s interop with the rt-core H743 at a ±0.5 % clock offset. T26.
