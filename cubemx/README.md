@@ -43,7 +43,7 @@ Loading the `.ioc` logs CubeMX messages that cannot be removed: one `Pin<N> (VP_
 | APB1 / APB2 | 170 MHz (no divider) |
 | Flash latency | 4 wait states (`FLASH_LATENCY_4`) |
 | FDCAN kernel clock | PCLK1 = 170 MHz (500 kbit/s divides exactly, e.g. prescaler 20 x 17 time quanta) |
-| RTC | LSE 32.768 kHz (on-board crystal) |
+| RTC | not used. `safety-node.ioc` selects `RCC_RTCCLKSOURCE_LSE` and the LSE pins PC14/PC15 are in LSE mode, but `SystemClock_Config` (`Src/main.c:149`) starts only the HSE and the PLL: the generated code never starts the LSE and no RTC peripheral is initialised |
 
 ## SPI2 (own MPU-6500 IMU, plan: PB13 SCK, PB14 MISO, PB15 MOSI, AF5)
 
@@ -57,4 +57,18 @@ The CubeMX board support package (BSP COMMON) is removed from the project becaus
 - DMA channel allocation (TIM3_CH1 and TIM3_CH2 on DMA1 channels 1 and 2) is a proposal; the plan says to verify it in CubeMX.
 - Timer periods (LED ring), I2C timing, UART baud rates, IWDG and every other parameter: CubeMX defaults.
 - The linker script and the clock/reset/option-byte init are CubeMX defaults (red zone: need a `safety-reviewer` pass before they are final).
+- The newlib heap is linked (`_Min_Heap_Size 0x200`, `STM32G474xx_FLASH.ld:66`, reserved at `:235`; `_sbrk` in `Src/sysmem.c:54`). Invariant 5 forbids dynamic memory on this MCU.
+- Option bytes are not set: nSWBOOT0/nBOOT0, `BOR_LEV` and `IWDG_SW` are at their factory values.
+- `Error_Handler` (`Src/main.c:611`) disables IRQs and spins; it does not drive the outputs to a safe state.
+
+## Must fix before first power-on (safety review 2026-11-27)
+
+Recorded, not implemented. Line numbers refer to the generated files in this folder.
+
+- [ ] No IWDG, although `CLAUDE.md` and the pin plan require one. Prefer the hardware IWDG started by the `IWDG_SW` option byte.
+- [ ] `Error_Handler` (`Src/main.c:611-619`) must first drive PC4, PC5, PB0, PB1 and PC2 low (the outputs initialised at `Src/main.c:554-560`), then let the IWDG reset the MCU. A fault during an IMMO pulse otherwise keeps the bistable relay coil energised.
+- [ ] Option bytes: nSWBOOT0 = 0 and nBOOT0 = 1 (boot from flash regardless of the BOOT0 pin), a raised `BOR_LEV`.
+- [ ] FDCAN1 is at the CubeMX default: prescaler 16, 3 tq, about 3.54 Mbit/s, `FDCAN_MODE_NORMAL` (`Src/main.c:196`, `:200-203`). It needs 500 kbit/s from `vehicle-defs`, the D-118(d) filters, FIFOs and reject-by-default (`StdFiltersNbr` is 0 at `:208`), and a boot self-check.
+- [ ] The LED-ring DMA IRQs are at priority 0 (`Src/main.c:527`, `:530`). Rank them below the schedule timer and FDCAN.
+- [ ] Replace `_sbrk` (`Src/sysmem.c:54`) with a stub that always fails, and add a CI `nm` gate that rejects `malloc` and `_sbrk` in the image.
 
