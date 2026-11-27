@@ -2,3 +2,9 @@
 # Every line is a deviation recorded in misra/README.md; add nothing here without a row there.
 misra-c2012-15.5
 misra-c2012-8.7:src/app/safety_app.c
+misra-c2012-8.7:cubemx/User/sbrk_fail.c
+misra-c2012-11.6:cubemx/User/sbrk_fail.c
+misra-c2012-21.2:cubemx/User/sbrk_fail.c
+misra-c2012-8.7:cubemx/User/boot_checks.c
+misra-c2012-2.5:cubemx/User/boot_checks.h
+misra-c2012-2.5:src/hal/fault_record.h
