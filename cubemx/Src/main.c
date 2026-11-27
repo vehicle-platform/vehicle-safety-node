@@ -205,7 +205,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan1.Init.AutoRetransmission = DISABLE;
+  hfdcan1.Init.AutoRetransmission = ENABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
   hfdcan1.Init.NominalPrescaler = 20;
@@ -675,8 +675,8 @@ void Error_Handler(void)
   /* Then reset the MCU. No infinite spin; the IWDG stays armed as the backstop should the
    * reset request itself fail. NOT "back to unlocked": the latching immobilizer relay keeps
    * a LOCKED latch through a reset, and a truncated SET pulse can leave it in an unknown
-   * state (D-097). The boot state handling (unknown -> 10 s unlock timer, or a RESET pulse
-   * at boot) is T13. */
+   * state (D-097). Boot state handling is T13: treat the state as unknown and start the
+   * 10 s unlock timer; a boot never pulses the relay (repo CLAUDE.md rule 5). */
   NVIC_SystemReset();
   /* USER CODE END Error_Handler_Debug */
 }
