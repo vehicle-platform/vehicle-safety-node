@@ -35,15 +35,33 @@ _Static_assert((CAN_TIMING_NBTP_NTSEG2_MASK << CAN_TIMING_NBTP_NTSEG2_POS) == FD
  */
 __attribute__((section(".noinit,\"aw\",%nobits@"))) static reset_counter_t s_reset_counter;
 
+/* Fault record of the last fault path; not touched at boot, see boot_fault_record_get(). */
+__attribute__((section(".noinit,\"aw\",%nobits@"))) fault_record_t g_boot_fault_record;
+
 static uint32_t s_reset_csr;
 static reset_cause_t s_reset_cause = RESET_CAUSE_UNKNOWN;
 static uint32_t s_hw_config_flags;
 
 extern uint32_t _sstack; /* linker: bottom of the stack region (_estack - _Min_Stack_Size) */
 
-void boot_fault_safe_state(void)
+void boot_fault_safe_state(uint32_t tag)
 {
-    boot_safe_state();
+    boot_safe_state(tag);
+}
+
+bool boot_fault_record_get(fault_record_t *out)
+{
+    const bool ok = fault_record_valid(&g_boot_fault_record);
+
+    if (ok) {
+        *out = g_boot_fault_record;
+    }
+    return ok;
+}
+
+void boot_fault_record_clear(void)
+{
+    g_boot_fault_record.magic = 0u;
 }
 
 /* True if the .noinit record lies fully below the stack region, so it cannot alias the stack. */
@@ -59,6 +77,9 @@ void boot_reset_cause_capture(void)
     s_reset_csr = RCC->CSR;
     s_reset_cause = reset_cause_decode(s_reset_csr);
     RCC->CSR |= RCC_CSR_RMVF;
+    /* Write RMVF back to 0 explicitly: RM0440 does not say it self-clears, and a bit left at 1
+     * would keep clearing the flags of the next warm reset before software could read them. */
+    RCC->CSR &= ~RCC_CSR_RMVF;
     if (boot_noinit_placement_ok()) {
         (void)reset_counter_update(&s_reset_counter, s_reset_cause);
     }
@@ -113,7 +134,7 @@ bool boot_fdcan_timing_ok(const FDCAN_HandleTypeDef *hfdcan, uint32_t expected_b
 HAL_StatusTypeDef boot_fdcan_start(FDCAN_HandleTypeDef *hfdcan, uint32_t expected_bps)
 {
     if (!boot_fdcan_timing_ok(hfdcan, expected_bps)) {
-        boot_safe_state();
+        boot_safe_state(FAULT_TAG_ERROR_HANDLER);
     }
     return HAL_FDCAN_Start(hfdcan);
 }

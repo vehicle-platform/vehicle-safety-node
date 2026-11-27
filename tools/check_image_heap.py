@@ -7,7 +7,8 @@ Forbidden (exit 1): the C library heap (malloc, free, calloc, realloc, memalign,
 reentrant `_r` forms, `__malloc_*`) and the `_sbrk` / `_sbrk_r` / `sbrk` break functions. The
 image links cubemx/User/sbrk_fail.c (an `_sbrk` that always fails); even that must not be
 reachable, so any `_sbrk` symbol in the image means something calls into the C library heap.
-The generated `__sbrk_heap_end` (Src/sysmem.c) must be absent too: it proves the generated
+This is bare-metal safety code: no FreeRTOS, so the FreeRTOS heap symbols are forbidden too
+(pass --forbid-freertos-heap; kept optional so the tool is reusable). The generated `__sbrk_heap_end` (Src/sysmem.c) must be absent too: it proves the generated
 newlib heap is not linked.
 
 Residual (reported, exit 0): the FreeRTOS heap_4 allocator (`pvPortMalloc`, `vPortFree`).
@@ -22,7 +23,9 @@ import sys
 FORBIDDEN = re.compile(
     r"^(malloc|free|calloc|realloc|reallocf|memalign|aligned_alloc|posix_memalign|valloc|pvalloc"
     r"|_malloc_r|_free_r|_calloc_r|_realloc_r|_memalign_r|_mallinfo_r|_malloc_trim_r"
-    r"|_sbrk|_sbrk_r|sbrk|__sbrk_heap_end|__malloc_[A-Za-z_]+|_malloc_[A-Za-z_]+)$"
+    r"|_sbrk|_sbrk_r|sbrk|__sbrk_heap_end|__malloc_[A-Za-z_]+|_malloc_[A-Za-z_]+"
+    r"|mallinfo|mallopt|malloc_usable_size|malloc_trim|malloc_stats|_reallocf_r|reallocf|_valloc_r|_pvalloc_r"
+    r"|_mallopt_r|_malloc_usable_size_r|_Znwj|_Znaj|_ZdlPv|_ZdaPv|_ZdlPvj|_ZdaPvj)$"
 )
 FREERTOS_HEAP = re.compile(r"^(pvPortMalloc|vPortFree|xPortGetFreeHeapSize|xPortGetMinimumEverFreeHeapSize)$")
 

@@ -682,7 +682,7 @@ void Error_Handler(void)
    * a LOCKED latch through a reset, and a truncated SET pulse can leave it in an unknown
    * state (D-097). Boot state handling is T13: treat the state as unknown and start the
    * 10 s unlock timer; a boot never pulses the relay (repo CLAUDE.md rule 5). */
-  boot_safe_state();
+  boot_safe_state(FAULT_TAG_ERROR_HANDLER);
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT

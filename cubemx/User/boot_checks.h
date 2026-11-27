@@ -9,6 +9,7 @@
 
 #include "main.h"
 
+#include "hal/fault_record.h"
 #include "hal/hw_config.h"
 #include "hal/reset_cause.h"
 
@@ -34,22 +35,26 @@ static inline __attribute__((always_inline)) void boot_outputs_off(void)
 {
     RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN | RCC_AHB2ENR_GPIOBEN | RCC_AHB2ENR_GPIOCEN;
     (void)RCC->AHB2ENR;
-    GPIOC->BSRR = ((uint32_t)(GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5)) << 16U;
-    GPIOB->BSRR = ((uint32_t)(GPIO_PIN_0 | GPIO_PIN_1)) << 16U;
+    GPIOC->BSRR = (((uint32_t)GPIO_PIN_2 | (uint32_t)GPIO_PIN_4 | (uint32_t)GPIO_PIN_5) << 16U);
+    GPIOB->BSRR = (((uint32_t)GPIO_PIN_0 | (uint32_t)GPIO_PIN_1) << 16U);
     GPIOA->BSRR = ((uint32_t)GPIO_PIN_5) << 16U;
     __DSB();
 }
 
 /*
- * Safe state, then reset: IRQs masked, outputs off, system reset request. Never returns; the
+ * Safe state, then reset: IRQs masked, outputs off, fault record stored, system reset request. Never returns; the
  * wait after the request is bounded by the reset itself (the IWDG backs it up). Same
  * always_inline reasoning as boot_outputs_off(). NOT "back to unlocked": the latching
  * immobilizer relay keeps a LOCKED latch through a reset (D-097); the boot state handling is T13.
  */
-static inline __attribute__((always_inline, noreturn)) void boot_safe_state(void)
+extern fault_record_t g_boot_fault_record; /* .noinit, boot_checks.c */
+
+static inline __attribute__((always_inline, noreturn)) void boot_safe_state(uint32_t tag)
 {
     __disable_irq();
     boot_outputs_off();
+    /* Plain stores, no call: which path ran and CFSR/HFSR, for the next boot to report. */
+    fault_record_store(&g_boot_fault_record, tag, SCB->CFSR, SCB->HFSR);
     SCB->AIRCR = (0x5FAUL << SCB_AIRCR_VECTKEY_Pos) | (SCB->AIRCR & SCB_AIRCR_PRIGROUP_Msk) |
                  SCB_AIRCR_SYSRESETREQ_Msk;
     __DSB();
@@ -65,14 +70,20 @@ static inline __attribute__((always_inline, noreturn)) void boot_safe_state(void
  * not trusted, and the fault is never resumed, so restarting the stack at the top is safe. Use
  * only as the whole body of a function declared __attribute__((naked)).
  */
-#define BOOT_FAULT_ENTRY()                  \
-    __asm volatile("ldr r0, =_estack\n"     \
-                   "msr msp, r0\n"          \
+#define BOOT_FAULT_ENTRY(tag)               \
+    __asm volatile("ldr r1, =_estack\n"     \
+                   "msr msp, r1\n"          \
                    "isb\n"                  \
-                   "b boot_fault_safe_state\n")
+                   "movs r0, %0\n"          \
+                   "b boot_fault_safe_state\n" \
+                   : : "i"(tag) : "r0", "r1")
 
 /* Target of BOOT_FAULT_ENTRY(); a function (not inline) because the asm branches to it by name. */
-void boot_fault_safe_state(void) __attribute__((noreturn, used));
+void boot_fault_safe_state(uint32_t tag) __attribute__((noreturn, used));
+
+/* Fault record of the previous run (valid only if a fault path stored one). */
+bool boot_fault_record_get(fault_record_t *out);
+void boot_fault_record_clear(void);
 
 /*
  * Reset cause and IWDG reset counter. boot_reset_cause_capture() reads RCC->CSR, stores it,

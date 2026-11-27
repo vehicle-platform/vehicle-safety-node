@@ -176,6 +176,14 @@ jobs:
             --error-exitcode=1 --suppressions-list=misra/suppressions.txt \
             --suppress=missingIncludeSystem '--suppress=*:*external/*' -i src/hal/host \
             -I src -I external/vehicle-defs/gen/c/safety src
+          # The hand-written files of the CubeMX image (T77; generated code stays out).
+          cppcheck --std=c11 --enable=style --addon=misra --inline-suppr \
+            --error-exitcode=1 --suppressions-list=misra/suppressions.txt \
+            --suppress=missingIncludeSystem '--suppress=*:*cubemx/Drivers/*' '--suppress=*:*cubemx/Inc/*' \
+            -DSTM32G474xx -DUSE_HAL_DRIVER -D__GNUC__=13 -D__ARM_ARCH_7EM__=1 -D__CORTEX_M=4 -D__FPU_PRESENT=1 \
+            -I src -I cubemx/User -I cubemx/Inc -I cubemx/Drivers/CMSIS/Include \
+            -I cubemx/Drivers/CMSIS/Device/ST/STM32G4xx/Include \
+            -I cubemx/Drivers/STM32G4xx_HAL_Driver/Inc cubemx/User
 
   # T67: boot test of the CubeMX image in Renode (no board needed). Renode and the Python
   # packages are pinned; the tarball is verified against the SHA-256 GitHub publishes for the
@@ -189,6 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          submodules: recursive
           persist-credentials: false
 
       # Same toolchain source as the build-and-test job (Ubuntu's gcc-arm-none-eabi).
@@ -205,12 +214,21 @@ jobs:
           cmake --preset Debug
           cmake --build --preset Debug
 
-      # T77 / invariant 5: the linked image must contain no malloc/free/_sbrk (the generated
-      # sysmem.c is replaced by an always-failing _sbrk); bare-metal, so no heap symbol at all.
-      # The image includes no vehicle-defs gen code, so no submodule checkout is needed here;
-      # add `submodules: recursive` to the checkout above when it starts to include gen/c.
-      - name: No heap in the CubeMX image (nm)
-        run: python3 tools/check_image_heap.py --nm arm-none-eabi-nm --forbid-freertos-heap cubemx/build/Debug/safety-node.elf
+      # T77 / invariant 5 + fault path: no heap symbol in the images (the generated sysmem.c is
+      # replaced by an always-failing _sbrk), a canary proving the gate fails on a malloc ELF, and
+      # every fault handler reloads MSP first and uses no stack. Debug and Release.
+      - name: Image gates (heap, fault handlers; Debug and Release)
+        run: |
+          printf '#include <stdlib.h>\nint main(void){void *p = malloc(8); free(p); return 0;}\n' > "$RUNNER_TEMP/canary.c"
+          arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb --specs=nosys.specs "$RUNNER_TEMP/canary.c" -o "$RUNNER_TEMP/canary.elf"
+          if python3 tools/check_image_heap.py --nm arm-none-eabi-nm --forbid-freertos-heap "$RUNNER_TEMP/canary.elf"; then
+            echo "::error::the heap gate accepted an ELF that links malloc"; exit 1
+          fi
+          (cd cubemx && cmake --preset Release && cmake --build --preset Release)
+          for cfg in Debug Release; do
+            python3 tools/check_image_heap.py --nm arm-none-eabi-nm --forbid-freertos-heap cubemx/build/$cfg/safety-node.elf
+            python3 tools/check_fault_handlers.py --objdump arm-none-eabi-objdump cubemx/build/$cfg/safety-node.elf
+          done
 
       - name: Install Renode ${{ env.RENODE_VERSION }}
         timeout-minutes: 5
