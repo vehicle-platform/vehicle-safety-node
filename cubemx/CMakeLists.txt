@@ -37,6 +37,13 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
+# T77: the generated Src/sysmem.c (a working newlib _sbrk, not editable: no USER CODE block) is
+# dropped from the target and User/sbrk_fail.c (an _sbrk that always fails, invariant 5) is built
+# instead. This survives a CubeMX regeneration, which rewrites only cmake/stm32cubemx.
+get_target_property(SAFETY_NODE_SOURCES ${CMAKE_PROJECT_NAME} SOURCES)
+list(FILTER SAFETY_NODE_SOURCES EXCLUDE REGEX "Src/sysmem\\.c$")
+set_property(TARGET ${CMAKE_PROJECT_NAME} PROPERTY SOURCES ${SAFETY_NODE_SOURCES})
+
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined library search paths
@@ -45,11 +52,15 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    User/boot_checks.c
+    User/sbrk_fail.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    User
+    ../src
 )
 
 # Add project symbols (macros)

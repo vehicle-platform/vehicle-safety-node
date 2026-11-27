@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "boot_checks.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -89,7 +89,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  /* First thing in main: read and clear RCC->CSR (before HAL/clock init), count IWDG resets. */
+  boot_reset_cause_capture();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -120,7 +121,18 @@ int main(void)
   MX_TIM3_Init();
   MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
-
+  /* Option bytes / IWDG / BOR against cubemx/README.md: recorded only, never a halt (T77). */
+  boot_hw_config_check();
+#if defined(SAFETY_BOOT_START_FDCAN)
+  /* TODO(T13): the FDCAN port starts the controller here. Off in this image (no frame is
+   * exchanged, and Renode's M_CAN model does not store NBTP, so the read-back would fail).
+   * boot_fdcan_start() checks the run-time kernel clock and the NBTP read-back with
+   * can_timing_nbtp_ok() and goes to the safe state instead of starting on a mismatch. */
+  if (boot_fdcan_start(&hfdcan1, BOOT_FDCAN1_EXPECTED_BPS) != HAL_OK)
+  {
+    Error_Handler();
+  }
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -652,12 +664,7 @@ static void MX_GPIO_Init(void)
   */
 void safety_outputs_off(void)
 {
-  RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN | RCC_AHB2ENR_GPIOBEN | RCC_AHB2ENR_GPIOCEN;
-  (void)RCC->AHB2ENR;
-  GPIOC->BSRR = ((uint32_t)(GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_5)) << 16U;
-  GPIOB->BSRR = ((uint32_t)(GPIO_PIN_0 | GPIO_PIN_1)) << 16U;
-  GPIOA->BSRR = ((uint32_t)GPIO_PIN_5) << 16U;
-  __DSB();
+  boot_outputs_off(); /* always_inline register writes (User/boot_checks.h) */
 }
 
 /* USER CODE END 4 */
@@ -670,14 +677,12 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  safety_outputs_off();
-  /* Then reset the MCU. No infinite spin; the IWDG stays armed as the backstop should the
+  /* Outputs off and reset (always_inline, stack-free, never returns: User/boot_checks.h). No infinite spin; the IWDG stays armed as the backstop should the
    * reset request itself fail. NOT "back to unlocked": the latching immobilizer relay keeps
    * a LOCKED latch through a reset, and a truncated SET pulse can leave it in an unknown
    * state (D-097). Boot state handling is T13: treat the state as unknown and start the
    * 10 s unlock timer; a boot never pulses the relay (repo CLAUDE.md rule 5). */
-  NVIC_SystemReset();
+  boot_safe_state();
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT

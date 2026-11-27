@@ -35,3 +35,8 @@ set_source_files_properties(${PROJECT_SOURCE_DIR}/src/app/safety_app.c TARGET_DI
     PROPERTIES COMPILE_OPTIONS "${VEHICLE_WARNINGS}" COMPILE_DEFINITIONS
     "platform_safety_warning_status_pack_checked=fi_warn_pack;platform_heartbeat_safety_pack_checked=fi_hbs_pack;platform_safety_warning_status_e2e_protect=fi_warn_protect;platform_heartbeat_safety_e2e_protect=fi_hbs_protect;platform_link_send=fi_link_send")
 add_test(NAME test_safety_app_faults COMMAND test_safety_app_faults)
+
+# T77 boot-check arithmetic (src/hal, pure headers used by cubemx/User/boot_checks.c).
+vehicle_host_test(test_reset_cause)
+vehicle_host_test(test_hw_config)
+vehicle_host_test(test_can_timing)

@@ -205,6 +205,13 @@ jobs:
           cmake --preset Debug
           cmake --build --preset Debug
 
+      # T77 / invariant 5: the linked image must contain no malloc/free/_sbrk (the generated
+      # sysmem.c is replaced by an always-failing _sbrk); bare-metal, so no heap symbol at all.
+      # The image includes no vehicle-defs gen code, so no submodule checkout is needed here;
+      # add `submodules: recursive` to the checkout above when it starts to include gen/c.
+      - name: No heap in the CubeMX image (nm)
+        run: python3 tools/check_image_heap.py --nm arm-none-eabi-nm --forbid-freertos-heap cubemx/build/Debug/safety-node.elf
+
       - name: Install Renode ${{ env.RENODE_VERSION }}
         timeout-minutes: 5
         run: |
