@@ -1,0 +1,142 @@
+// Renode 1.17.0 ships no STM32G4 platform, so this is a minimal STM32G474RE description made of
+// Renode's generic STM32 models. Only what the CubeMX image touches is described; see
+// tests/renode/README.md for what is real and what is stubbed.
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4f"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    // The firmware runs the core at 170 MHz after SystemClock_Config(); SysTick follows HCLK.
+    systickFrequency: 170000000
+    IRQ -> cpu@0
+
+// Memories (RM0440 section 2.2): 512 KB flash; SRAM1 80 KB + SRAM2 16 KB + CCM SRAM 32 KB, which the
+// linker script treats as one 128 KB region at 0x20000000 (the CCM is aliased at 0x20018000).
+flash: Memory.MappedMemory @ sysbus 0x08000000
+    size: 0x80000
+
+ram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x20000
+
+// RCC, PWR and FLASH_ACR are STUBS (plain register files). The firmware polls ready/status bits in these
+// (HSERDY, PLLRDY, LSIRDY, SWS, PWR VOSF, FLASH latency read-back); without the stub the HAL times out
+// and ends in Error_Handler. The ready bits are derived from the matching enable bits so that the HAL
+// still has to request every oscillator and the PLL. No clock tree is modelled.
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {0x00: 0x00000063, 0x08: 0x00000000, 0x0C: 0x00001000}
+elif request.IsWrite:
+    regs[request.Offset] = request.Value
+else:
+    v = regs.get(request.Offset, 0)
+    if request.Offset == 0x00:    # CR: HSION->HSIRDY, HSEON->HSERDY, PLLON->PLLRDY
+        v = v & ~((1 << 10) | (1 << 17) | (1 << 25))
+        if regs.get(0x00, 0) & (1 << 8):
+            v = v | (1 << 10)
+        if regs.get(0x00, 0) & (1 << 16):
+            v = v | (1 << 17)
+        if regs.get(0x00, 0) & (1 << 24):
+            v = v | (1 << 25)
+    elif request.Offset == 0x08:  # CFGR: SWS[3:2] mirrors SW[1:0]
+        v = (v & ~0xC) | ((v & 0x3) << 2)
+    elif request.Offset == 0x90:  # BDCR: LSEON->LSERDY
+        v = (v & ~0x2) | ((v & 0x1) << 1)
+    elif request.Offset == 0x94:  # CSR: LSION->LSIRDY
+        v = (v & ~0x2) | ((v & 0x1) << 1)
+    elif request.Offset == 0x98:  # CRRCR: HSI48ON->HSI48RDY
+        v = (v & ~0x2) | ((v & 0x1) << 1)
+    request.Value = v
+'''
+
+pwr: Python.PythonPeripheral @ sysbus 0x40007000
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {}
+elif request.IsWrite:
+    regs[request.Offset] = request.Value
+else:
+    # SR2 (0x14) reads 0: VOSF (voltage scaling in progress) is never set, so the boost-mode switch completes.
+    request.Value = 0 if request.Offset == 0x14 else regs.get(request.Offset, 0)
+'''
+
+flashAcr: Python.PythonPeripheral @ sysbus 0x40022000
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {}
+elif request.IsWrite:
+    regs[request.Offset] = request.Value
+else:
+    request.Value = regs.get(request.Offset, 0)
+'''
+
+// Real models of the Renode library (same IP as the STM32G4 blocks).
+iwdg: Timers.STM32_IndependentWatchdog @ sysbus 0x40003000
+    frequency: 32000
+
+// FDCAN1 is a Bosch M_CAN like the H7 one; the G4 message RAM is 3 x 0x350 bytes at 0x4000A400.
+fdcan1: CAN.MCAN @ sysbus 0x40006400
+    messageRAM: fdcanRam
+    Line0 -> nvic@21
+    Line1 -> nvic@22
+
+fdcanRam: Memory.ArrayMemory @ sysbus 0x4000A400
+    size: 0xC00
+
+lpuart1: UART.STM32F7_USART @ sysbus 0x40008000
+    frequency: 170000000
+    IRQ -> nvic@91
+
+usart3: UART.STM32F7_USART @ sysbus 0x40004800
+    frequency: 170000000
+    IRQ -> nvic@39
+
+uart4: UART.STM32F7_USART @ sysbus 0x40004C00
+    frequency: 170000000
+    IRQ -> nvic@52
+
+i2c3: I2C.STM32F7_I2C @ sysbus 0x40007800
+    EventInterrupt -> nvic@72
+    ErrorInterrupt -> nvic@73
+
+// No STM32G4 series value exists; L5 is the closest (same SPI v2 register set family).
+spi2: SPI.STM32SPI @ sysbus 0x40003800
+    series: STM32Series.L5
+    IRQ -> nvic@36
+
+timer3: Timers.STM32_Timer @ sysbus 0x40000400
+    initialLimit: 0xFFFF
+    frequency: 170000000
+    -> nvic@29
+
+dma1: DMA.STM32LDMA @ sysbus 0x40020000
+    [0-7] -> nvic@[11-17, 56]
+
+gpioPortA: GPIOPort.STM32_GPIOPort @ sysbus <0x48000000, +0x400>
+    numberOfAFs: 16
+
+gpioPortB: GPIOPort.STM32_GPIOPort @ sysbus <0x48000400, +0x400>
+    numberOfAFs: 16
+
+gpioPortC: GPIOPort.STM32_GPIOPort @ sysbus <0x48000800, +0x400>
+    numberOfAFs: 16
+
+gpioPortD: GPIOPort.STM32_GPIOPort @ sysbus <0x48000C00, +0x400>
+    numberOfAFs: 16
+
+gpioPortE: GPIOPort.STM32_GPIOPort @ sysbus <0x48001000, +0x400>
+    numberOfAFs: 16
+
+gpioPortF: GPIOPort.STM32_GPIOPort @ sysbus <0x48001400, +0x400>
+    numberOfAFs: 16
+
+gpioPortG: GPIOPort.STM32_GPIOPort @ sysbus <0x48001800, +0x400>
+    numberOfAFs: 16

@@ -1,0 +1,42 @@
+:name: safety-node CubeMX image on STM32G474 (Renode)
+:description: Loads the Debug ELF of cubemx/ on the minimal STM32G474 description in safety-node.repl and installs the probes used by boot.robot. Run: renode tests/renode/safety-node.resc
+
+# $elf can be set before including this script; the default is the Debug build of cubemx/.
+$elf?=$ORIGIN/../../cubemx/build/Debug/safety-node.elf
+
+using sysbus
+mach create "safety-node"
+machine LoadPlatformDescription $ORIGIN/safety-node.repl
+
+sysbus LoadELF $elf
+
+# The image runs from flash at 0x08000000. A machine reset (IWDG expiry, NVIC system reset) clears
+# VTOR again; the reset macro turns every reset into a failure probe for the test.
+sysbus.cpu VectorTableOffset 0x08000000
+macro reset
+"""
+    sysbus.cpu VectorTableOffset 0x08000000
+    log "PROBE FAULT MachineReset"
+"""
+
+# Probes: each one logs a WARNING line that starts with "PROBE " and the symbol name.
+# A probe on a symbol that is missing from the ELF fails this script loudly (GetSymbolAddress).
+sysbus.cpu AddHook `sysbus GetSymbolAddress "Reset_Handler"` "self.WarningLog('PROBE Reset_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "main"` "self.WarningLog('PROBE main')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "MX_GPIO_Init"` "self.WarningLog('PROBE clock_init_done')"
+
+# HAL_IWDG_Refresh is not probed here: the super-loop calls it every iteration (millions of times per
+# emulated second), so a permanent probe would flood the log. boot.robot arms a one-shot probe instead:
+#   sysbus.cpu AddHook `sysbus GetSymbolAddress "HAL_IWDG_Refresh"` "self.WarningLog('PROBE HAL_IWDG_Refresh'); self.RemoveHooksAt(self.PC)"
+
+sysbus.cpu AddHook `sysbus GetSymbolAddress "Error_Handler"` "self.WarningLog('PROBE FAULT Error_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "HardFault_Handler"` "self.WarningLog('PROBE FAULT HardFault_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "NMI_Handler"` "self.WarningLog('PROBE FAULT NMI_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "MemManage_Handler"` "self.WarningLog('PROBE FAULT MemManage_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "BusFault_Handler"` "self.WarningLog('PROBE FAULT BusFault_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "UsageFault_Handler"` "self.WarningLog('PROBE FAULT UsageFault_Handler')"
+sysbus.cpu AddHook `sysbus GetSymbolAddress "Default_Handler"` "self.WarningLog('PROBE FAULT Default_Handler')"
+
+# FDCAN: the stock MCAN model does not store NBTP, so the programmed bit timing is decoded at write time.
+# Register layout (RM0440 FDCAN_NBTP): NSJW [31:25], NBRP [24:16], NTSEG1 [15:8], NTSEG2 [6:0].
+sysbus SetHookBeforePeripheralWrite fdcan1 "if offset == 0x1C: self.WarningLog('PROBE NBTP fdcan1 nbrp=%d ntseg1=%d ntseg2=%d nsjw=%d' % ((value >> 16) & 0x1FF, (value >> 8) & 0xFF, value & 0x7F, (value >> 25) & 0x7F))"
