@@ -200,6 +200,15 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # T77: a software reset request may only come from the always_inline safe state in
+      # cubemx/User/boot_checks.h (it stores a fault record, so the reset counter sees it); any
+      # other reset path would be an unrecorded loop that the counter does not count.
+      - name: Software reset only through boot_checks.h
+        run: |
+          if grep -rnE 'NVIC_SystemReset|SCB_AIRCR_SYSRESETREQ' src cubemx/Src cubemx/Inc cubemx/User | grep -v '^cubemx/User/boot_checks.h:'; then
+            echo "::error::a software reset outside cubemx/User/boot_checks.h"; exit 1
+          fi
+
       # Same toolchain source as the build-and-test job (Ubuntu's gcc-arm-none-eabi).
       - name: Install toolchain
         timeout-minutes: 10

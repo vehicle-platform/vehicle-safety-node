@@ -135,6 +135,15 @@ uint32_t boot_hw_config_flags(void);
  */
 #define BOOT_FDCAN1_EXPECTED_BPS 500000u
 
+/*
+ * T13 MUST-DO (cubemx/README.md, "Must fix before first power-on"): the generated main()
+ * calls MX_FDCAN1_Init() unconditionally (Src/main.c, USER CODE cannot change that) and a
+ * HAL_FDCAN_Init() failure goes to Error_Handler(), i.e. a reset (a counted loop once T13 halts
+ * after N resets). T13 sets "Do Not Generate Function Call" for MX_FDCAN1_Init and the QM
+ * peripherals (radar UART) in the .ioc, calls a wrapper from USER CODE that sets boot_can_fault()
+ * instead of resetting, and feeds boot_can_fault() into the node health 0x082 (defs follow-up).
+ * Until then only the Start-time check below is non-resetting.
+ */
 bool boot_fdcan_timing_ok(const FDCAN_HandleTypeDef *hfdcan, uint32_t expected_bps);
 
 /*

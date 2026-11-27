@@ -42,6 +42,18 @@ static void test_each_field_alone(void)
     TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NRST_MODE, hw_config_check_optr(OPTR_GOOD & ~0x30000000u));
 }
 
+static void test_noinit_placement(void)
+{
+    const uint32_t lo = 0x20000448u;
+    const uint32_t hi = 0x2001FC00u;
+    TEST_ASSERT_EQUAL_UINT32(0u, hw_config_check_placement(lo, hi, lo, 36u));
+    TEST_ASSERT_EQUAL_UINT32(0u, hw_config_check_placement(lo, hi, hi - 12u, 12u)); /* ends exactly at hi */
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NOINIT, hw_config_check_placement(lo, hi, lo - 4u, 12u)); /* zeroed by startup */
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NOINIT, hw_config_check_placement(lo, hi, hi - 8u, 12u)); /* aliases the stack */
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NOINIT, hw_config_check_placement(lo, hi, 0xFFFFFFF8u, 16u)); /* wraps */
+    TEST_ASSERT_EQUAL_UINT32(HW_CONFIG_BAD_NOINIT, hw_config_check_placement(lo, hi, 0u, 0u));
+}
+
 static void test_iwdg_registers(void)
 {
     TEST_ASSERT_EQUAL_UINT32(0u, hw_config_check_iwdg(3u, 99u, 4095u));
@@ -57,6 +69,7 @@ int main(void)
     RUN_TEST(test_configured_value_passes);
     RUN_TEST(test_factory_default_is_flagged);
     RUN_TEST(test_each_field_alone);
+    RUN_TEST(test_noinit_placement);
     RUN_TEST(test_iwdg_registers);
     return UNITY_END();
 }

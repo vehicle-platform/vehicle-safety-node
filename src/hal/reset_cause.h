@@ -11,8 +11,9 @@
  * power-on reset also sets the BOR flag; the G4 has no separate POR flag), so the decode is a
  * fixed priority, most specific first: IWDG, WWDG, low power, software, BOR (power-on or
  * brown-out), option-byte load, pin. BOR is decoded before OBL until target measurements show
- * which flags a power-on really sets (an option-byte reload that also set BOR reads as BOR,
- * which only clears the counter, the safe direction for a power cycle). A value with none of the known flags (including 0) is
+ * which flags a power-on really sets. An option-byte reload that also set BOR reads as BOR and
+ * clears the counter, which loses the loop history of a reset loop that happens to reload the
+ * option bytes; that is accepted until the measurement, not a safe direction. A value with none of the known flags (including 0) is
  * RESET_CAUSE_UNKNOWN. The bit positions are the RM0440 positions; the cubemx build asserts
  * them against the CMSIS RCC_CSR_*_Msk macros.
  */

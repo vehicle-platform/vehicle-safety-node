@@ -53,6 +53,7 @@ extern uint32_t _ebss;   /* linker: end of .bss (the startup zeroes up to here o
 static fault_record_t s_prev_fault;
 static bool s_prev_fault_valid;
 static bool s_can_fault;
+static uint32_t s_noinit_bad; /* HW_CONFIG_BAD_NOINIT or 0, set by boot_noinit_placement_ok() */
 
 void boot_fault_safe_state(uint32_t tag)
 {
@@ -77,14 +78,15 @@ void boot_fault_record_clear(void)
 static bool boot_noinit_placement_ok(void)
 {
     // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
-    const uintptr_t lo = (uintptr_t)&_ebss;
-    const uintptr_t hi = (uintptr_t)&_sstack;
-    const uintptr_t a = (uintptr_t)&s_reset_counter;
-    const uintptr_t b = (uintptr_t)&g_boot_fault_record;
+    const uint32_t lo = (uint32_t)(uintptr_t)&_ebss;
+    const uint32_t hi = (uint32_t)(uintptr_t)&_sstack;
+    const uint32_t a = (uint32_t)(uintptr_t)&s_reset_counter;
+    const uint32_t b = (uint32_t)(uintptr_t)&g_boot_fault_record;
     // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
 
-    return (a >= lo) && ((a + sizeof(s_reset_counter)) <= hi) && (b >= lo) &&
-           ((b + sizeof(g_boot_fault_record)) <= hi);
+    s_noinit_bad = hw_config_check_placement(lo, hi, a, (uint32_t)sizeof(s_reset_counter)) |
+                   hw_config_check_placement(lo, hi, b, (uint32_t)sizeof(g_boot_fault_record));
+    return s_noinit_bad == 0u;
 }
 
 void boot_reset_cause_capture(void)
@@ -132,7 +134,7 @@ void boot_abnormal_reset_count_clear(void)
 void boot_hw_config_check(void)
 {
     // cppcheck-suppress-begin misra-c2012-11.4 ; DEV-006: register access through the CMSIS peripheral macros / linker-symbol addresses
-    s_hw_config_flags = hw_config_check_optr(FLASH->OPTR) |
+    s_hw_config_flags = s_noinit_bad | hw_config_check_optr(FLASH->OPTR) |
                         hw_config_check_iwdg(IWDG->PR, IWDG->RLR, IWDG->WINR);
     // cppcheck-suppress-end misra-c2012-11.4 ; DEV-006
 }

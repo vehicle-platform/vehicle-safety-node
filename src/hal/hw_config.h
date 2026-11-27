@@ -37,6 +37,7 @@ extern "C" {
 #define HW_CONFIG_BAD_BOR_LEV 0x01u
 #define HW_CONFIG_BAD_IWDG_SW 0x02u    /* software-started IWDG option: not hardware watchdog */
 #define HW_CONFIG_BAD_BOOT_SRC 0x04u   /* nSWBOOT0 != 0 or nBOOT0 != 1 */
+#define HW_CONFIG_BAD_NOINIT 0x20u /* a .noinit object is outside [_ebss, _sstack]: counter and fault record disabled */
 #define HW_CONFIG_BAD_NRST_MODE 0x10u /* NRST not bidirectional: an internal reset would not drive the pin */
 #define HW_CONFIG_BAD_IWDG_TIMING 0x08u /* IWDG PR / RLR / WINR differ from the configuration */
 
@@ -58,6 +59,23 @@ static inline uint32_t hw_config_check_optr(uint32_t optr)
     if (((optr >> HW_CONFIG_OPTR_NRST_MODE_POS) & HW_CONFIG_OPTR_NRST_MODE_MASK) !=
         HW_CONFIG_EXPECT_NRST_MODE) {
         bad |= HW_CONFIG_BAD_NRST_MODE;
+    }
+    return bad;
+}
+
+/*
+ * HW_CONFIG_BAD_NOINIT unless the object [start, start + size) lies inside [lo, hi] (lo = _ebss,
+ * hi = _sstack): at or above lo (the startup zeroes .bss only up to _ebss) and ending at or
+ * below hi (cannot alias the stack). Addresses are 32-bit (the target); a wrap of start + size
+ * is rejected.
+ */
+static inline uint32_t hw_config_check_placement(uint32_t lo, uint32_t hi, uint32_t start, uint32_t size)
+{
+    const uint32_t end = start + size;
+    uint32_t bad = HW_CONFIG_BAD_NOINIT;
+
+    if ((start >= lo) && (end >= start) && (end <= hi)) {
+        bad = 0u;
     }
     return bad;
 }
