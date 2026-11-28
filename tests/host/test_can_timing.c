@@ -1,14 +1,16 @@
 /*
  * L0 tests for hal/can_timing (pure FDCAN nominal bit-timing arithmetic and the NBTP read-back
  * decode): the cubemx/ image values (170 MHz kernel, prescaler 20, seg1 14, seg2 2, SJW 2 =
- * 500 kbit/s, sample point 88.2 %), wrong prescaler/clock, field ranges, SJW rule, sample window.
+ * 500 kbit/s = PLATFORM_BITRATE, sample point 88.2 %), wrong prescaler/clock, field ranges, SJW rule, sample window.
  */
 #include "hal/can_timing.h"
+#include "platform.h"
 
 #include <stdint.h>
 #include <unity.h>
 
 #define KERNEL_HZ 170000000u
+/* The arithmetic tests use a literal rate; only the image test uses the generated constant. */
 #define BPS 500000u
 
 /* NBTP as HAL_FDCAN_Init writes it: fields hold the value minus one. */
@@ -20,8 +22,8 @@ void tearDown(void) {}
 
 static void test_image_values(void)
 {
-    TEST_ASSERT_EQUAL_UINT32(BPS, can_timing_bitrate(KERNEL_HZ, 20u, 14u, 2u));
-    TEST_ASSERT_TRUE(can_timing_ok(KERNEL_HZ, 20u, 14u, 2u, 2u, BPS));
+    TEST_ASSERT_EQUAL_UINT32(PLATFORM_BITRATE, can_timing_bitrate(KERNEL_HZ, 20u, 14u, 2u));
+    TEST_ASSERT_TRUE(can_timing_ok(KERNEL_HZ, 20u, 14u, 2u, 2u, PLATFORM_BITRATE));
 }
 
 static void test_wrong_values(void)

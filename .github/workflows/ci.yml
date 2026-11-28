@@ -96,8 +96,8 @@ jobs:
           # The safety image never includes rt-core sources or another node's gen/ (D-072
           # item 6, D-003): only gen/c/safety of the pinned defs.
           # Build inputs only (comments may name the fork's origin).
-          if grep -rnE --include='*.c' --include='*.h' '#[[:space:]]*include[[:space:]]*[<"][^">]*(rt_core|vehicle-rt-core|conn/|hil_sim)' src tests \
-              || grep -rnE 'vehicle-rt-core|gen/c/(rt_core|conn|hil_sim)' --include='CMakeLists.txt' --include='*.cmake' CMakeLists.txt src tests cmake; then
+          if grep -rnE --include='*.c' --include='*.h' '#[[:space:]]*include[[:space:]]*[<"][^">]*(rt_core|vehicle-rt-core|conn/|hil_sim)' src tests cubemx/User \
+              || grep -rnE 'vehicle-rt-core|gen/c/(rt_core|conn|hil_sim)' --include='CMakeLists.txt' --include='*.cmake' CMakeLists.txt src tests cmake cubemx/CMakeLists.txt; then
             echo "::error::safety-node uses gen/c/safety only and never rt-core sources"
             exit 1
           fi
@@ -180,8 +180,10 @@ jobs:
           cppcheck --std=c11 --enable=style --addon=misra --inline-suppr \
             --error-exitcode=1 --suppressions-list=misra/suppressions.txt \
             --suppress=missingIncludeSystem '--suppress=*:*cubemx/Drivers/*' '--suppress=*:*cubemx/Inc/*' \
+            '--suppress=*:*external/*' \
             -DSTM32G474xx -DUSE_HAL_DRIVER -D__GNUC__=13 -D__ARM_ARCH_7EM__=1 -D__CORTEX_M=4 -D__FPU_PRESENT=1 \
             -I src -I cubemx/User -I cubemx/Inc -I cubemx/Drivers/CMSIS/Include \
+            -I external/vehicle-defs/gen/c/safety \
             -I cubemx/Drivers/CMSIS/Device/ST/STM32G4xx/Include \
             -I cubemx/Drivers/STM32G4xx_HAL_Driver/Inc cubemx/User
 

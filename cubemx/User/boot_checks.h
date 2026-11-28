@@ -12,6 +12,7 @@
 #include "hal/fault_record.h"
 #include "hal/hw_config.h"
 #include "hal/reset_cause.h"
+#include "platform.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -129,11 +130,10 @@ uint32_t boot_hw_config_flags(void);
  * to can_timing_nbtp_ok() (hal/can_timing.h) with the expected bit rate. False for a wrong
  * clock tree, a wrong or unprogrammed NBTP, or an unreadable clock.
  *
- * vehicle-defs gen/c/safety has no bit-rate constant for the platform bus (defs follow-up);
- * the platform bus is 500 kbit/s (D-009, src/hal/can.h), so the value is local until defs has
- * one.
+ * The expected rate is the generated platform-bus constant PLATFORM_BITRATE (vehicle-defs
+ * gen/c/safety/platform.h, from the dbc/platform.dbc Baudrate attribute, 500 kbit/s, D-009).
  */
-#define BOOT_FDCAN1_EXPECTED_BPS 500000u
+#define BOOT_FDCAN1_EXPECTED_BPS PLATFORM_BITRATE
 
 /*
  * T13 MUST-DO (cubemx/README.md, "Must fix before first power-on"): the generated main()

@@ -61,6 +61,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     User
     ../src
+    # Generated platform-bus constants (PLATFORM_BITRATE); the submodule is pinned by the repo
+    ../external/vehicle-defs/gen/c/safety
 )
 
 # Add project symbols (macros)
